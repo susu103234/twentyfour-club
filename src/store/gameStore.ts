@@ -99,6 +99,7 @@ interface GameState {
   setMode: (m: Mode) => void;
   setDifficulty: (d: Difficulty) => void;
   setInputMode: (m: InputMode) => void;
+  toggleBubbleDrag: () => void;
   toggleAlwaysOnTop: () => void;
   startRush: () => void;
   stopRush: () => void;
@@ -109,6 +110,12 @@ interface GameState {
   // reduce actions
   toggleReduceSelection: (nodeId: string) => void;
   applyReduceOp: (op: ReduceOp) => void;
+  /**
+   * Commit a combine directly by node ids. Used by the drag-bubble board,
+   * which resolves its operand order from the gesture (dragged→target)
+   * rather than from a two-tap selection.
+   */
+  commitReduce: (aId: string, bId: string, op: ReduceOp) => void;
   undoReduce: () => void;
   resetReduce: () => void;
 }
@@ -131,6 +138,7 @@ const defaultPreferences: Preferences = {
   alwaysOnTop: true,
   sound: false,
   inputMode: "reduce",
+  bubbleDrag: true,
 };
 
 /**
@@ -512,6 +520,14 @@ export const useGame = create<GameState>()(
           reduceSelected: [],
         }),
 
+      toggleBubbleDrag: () => {
+        const prefs = get().preferences;
+        set({
+          preferences: { ...prefs, bubbleDrag: !prefs.bubbleDrag },
+          reduceSelected: [],
+        });
+      },
+
       toggleAlwaysOnTop: () => {
         const prefs = get().preferences;
         const next = !prefs.alwaysOnTop;
@@ -606,6 +622,19 @@ export const useGame = create<GameState>()(
         }
       },
 
+      commitReduce: (aId, bId, op) => {
+        const { reducePool } = get();
+        if (reducePool.length < 2) return;
+        const a = reducePool.find((n) => n.id === aId);
+        const b = reducePool.find((n) => n.id === bId);
+        if (!a || !b || a.id === b.id) return;
+        if (!isOpLegal(a, b, op)) return;
+        // Route through the existing selection-based action so all the
+        // end-of-pool evaluation (solve/submit on pool=1) stays in one place.
+        set({ reduceSelected: [a.id, b.id] });
+        get().applyReduceOp(op);
+      },
+
       undoReduce: () => {
         const { reduceHistory } = get();
         if (reduceHistory.length === 0) return;
@@ -632,13 +661,16 @@ export const useGame = create<GameState>()(
     {
       name: "24club/state",
       storage: createJSONStorage(() => localStorage),
-      version: 2,
+      version: 3,
       migrate: (persisted, version) => {
-        // v1 → v2: force alwaysOnTop to true for existing users so the
-        // floating window actually floats by default.
         const state = (persisted ?? {}) as { preferences?: Preferences };
+        // v1 → v2: force alwaysOnTop=true so the floating window floats.
         if (version < 2 && state.preferences) {
           state.preferences = { ...state.preferences, alwaysOnTop: true };
+        }
+        // v2 → v3: default the new bubble-drag board on.
+        if (version < 3 && state.preferences) {
+          state.preferences = { ...state.preferences, bubbleDrag: true };
         }
         return state;
       },

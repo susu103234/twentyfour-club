@@ -14,6 +14,8 @@ export function SettingsPanel() {
   const toggleOnTop = useGame((s) => s.toggleAlwaysOnTop);
   const inputMode = useGame((s) => s.preferences.inputMode);
   const setInputMode = useGame((s) => s.setInputMode);
+  const bubbleDrag = useGame((s) => s.preferences.bubbleDrag);
+  const toggleBubbleDrag = useGame((s) => s.toggleBubbleDrag);
   const hand = useGame((s) => s.hand);
   const loadCustomHand = useGame((s) => s.loadCustomHand);
 
@@ -74,6 +76,17 @@ export function SettingsPanel() {
               <p className="text-[11px] text-ink-400 mt-1">
                 Reduce: tap two cards, pick an op, they collapse. No brackets.
               </p>
+              {inputMode === "reduce" && (
+                <label className="flex items-center gap-2 text-sm text-ink-100 mt-2">
+                  <input
+                    type="checkbox"
+                    checked={bubbleDrag}
+                    onChange={toggleBubbleDrag}
+                    className="accent-accent-500"
+                  />
+                  Drag bubbles to merge
+                </label>
+              )}
             </Section>
 
             <Section label="Difficulty">

@@ -49,6 +49,8 @@ export interface Preferences {
   alwaysOnTop: boolean;
   sound: boolean;
   inputMode: InputMode;
+  /** Use drag-bubble reduce board instead of the tap-based one. */
+  bubbleDrag: boolean;
 }
 
 export interface Achievement {

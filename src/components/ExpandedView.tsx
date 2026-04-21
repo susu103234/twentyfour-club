@@ -5,6 +5,7 @@ import { Cards } from "./Cards";
 import { ExpressionInput } from "./ExpressionInput";
 import { ClickBuilder } from "./ClickBuilder";
 import { ReduceBoard } from "./ReduceBoard";
+import { BubbleBoard } from "./BubbleBoard";
 import { HintPanel } from "./HintPanel";
 import { Scoreboard } from "./Scoreboard";
 import { TimerBar } from "./TimerBar";
@@ -20,6 +21,7 @@ export function ExpandedView() {
   const undoReduce = useGame((s) => s.undoReduce);
   const resetReduce = useGame((s) => s.resetReduce);
   const inputMode = useGame((s) => s.preferences.inputMode);
+  const bubbleDrag = useGame((s) => s.preferences.bubbleDrag);
   const mode = useGame((s) => s.mode);
   const rushActive = useGame((s) => s.rushActive);
   const rushTimeMs = useGame((s) => s.rushTimeMs);
@@ -56,7 +58,7 @@ export function ExpandedView() {
             className="flex flex-col gap-2.5"
           >
             {isReduce ? (
-              <ReduceBoard />
+              bubbleDrag ? <BubbleBoard /> : <ReduceBoard />
             ) : (
               <>
                 <Cards />
