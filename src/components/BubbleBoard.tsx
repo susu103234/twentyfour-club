@@ -128,26 +128,29 @@ export function BubbleBoard() {
     const px = p.x;
     const py = p.y;
 
-    // 1) nearest other bubble to the pointer
-    let targetId: string | null = null;
-    let bestDist = Infinity;
+    // 1) Decide which card is the current target. Rule: a *new* target
+    //    only locks in when the pointer is squarely over another card;
+    //    once locked it stays locked for the rest of the gesture so the
+    //    player can drift toward an operator satellite without the
+    //    satellites vanishing under them. The previous target still wins
+    //    unless the pointer enters a *different* card's body.
+    let newTarget: string | null = null;
     for (const n of pool) {
       if (n.id === id) continue;
       const s = slotMap.get(n.id);
       if (!s) continue;
       const cx = s.x + CARD_W / 2;
       const cy = s.y + CARD_H / 2;
-      const d = Math.hypot(cx - px, cy - py);
-      if (d < bestDist) {
-        bestDist = d;
-        targetId = n.id;
+      if (Math.abs(px - cx) < CARD_W / 2 && Math.abs(py - cy) < CARD_H / 2) {
+        newTarget = n.id;
+        break;
       }
     }
-    const withinTarget = targetId !== null && bestDist < CARD_W * 0.95;
+    const targetId = newTarget ?? drag?.targetId ?? null;
 
-    // 2) if over a target, check which operator satellite the pointer hits
+    // 2) if we have a target, check which operator satellite the pointer hits
     let op: ReduceOp | null = null;
-    if (withinTarget && targetId) {
+    if (targetId) {
       const anchor = satelliteAnchor(px, py, slotMap.get(targetId)!);
       for (const sat of OP_LAYOUT) {
         const sx = anchor.x + sat.dx;
@@ -161,13 +164,7 @@ export function BubbleBoard() {
       }
     }
 
-    setDrag({
-      id,
-      px,
-      py,
-      targetId: withinTarget ? targetId : null,
-      op,
-    });
+    setDrag({ id, px, py, targetId, op });
   };
 
   const handleDragEnd = () => {
@@ -313,8 +310,6 @@ function DragCard({
       animate={{
         opacity: 1,
         scale: isDragged ? 1.06 : isHoverTarget ? 1.04 : 1,
-        left: slot.x,
-        top: slot.y,
         rotate: isDragged ? -2 : 0,
       }}
       exit={{ opacity: 0, scale: 0.4 }}
@@ -327,11 +322,15 @@ function DragCard({
       whileTap={{ scale: 1.02 }}
       className="absolute card-face flex-col gap-0.5"
       style={{
+        left: slot.x,
+        top: slot.y,
         width: CARD_W,
         height: CARD_H,
         cursor: "grab",
         zIndex: isDragged ? 20 : 1,
         touchAction: "none",
+        transition:
+          "left 280ms cubic-bezier(0.2,0.8,0.2,1), top 280ms cubic-bezier(0.2,0.8,0.2,1)",
         boxShadow: isHoverTarget
           ? "0 10px 24px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.1) inset, 0 -1px 0 rgba(0,0,0,0.45) inset, 0 0 0 2px rgba(232,217,160,0.65), 0 0 22px rgba(232,217,160,0.28)"
           : primed

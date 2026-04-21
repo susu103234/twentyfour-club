@@ -71,27 +71,32 @@ export function CollapsedView() {
       : undefined;
 
   const onCardDrag = (id: string, info: PanInfo) => {
-    const { clientX, clientY } = { clientX: info.point.x, clientY: info.point.y };
-    // Find the nearest other card whose box contains the pointer (or whose
-    // centre is within ~18 px of it — tiny targets deserve generous snap).
-    let targetId: string | null = null;
-    let bestDist = Infinity;
+    const clientX = info.point.x;
+    const clientY = info.point.y;
+
+    // A *new* target only locks in when the pointer is squarely inside
+    // another mini-card's bounding box. Once locked, keep it — otherwise
+    // moving right toward the op row below would unlatch the op menu
+    // and dismiss the pills before the player can reach them.
+    let newTarget: string | null = null;
     for (const [otherId, el] of cardRefs.current) {
       if (otherId === id) continue;
       const r = el.getBoundingClientRect();
-      const cx = r.left + r.width / 2;
-      const cy = r.top + r.height / 2;
-      const d = Math.hypot(cx - clientX, cy - clientY);
-      if (d < bestDist) {
-        bestDist = d;
-        targetId = otherId;
+      if (
+        clientX >= r.left &&
+        clientX <= r.right &&
+        clientY >= r.top &&
+        clientY <= r.bottom
+      ) {
+        newTarget = otherId;
+        break;
       }
     }
-    const onTarget = targetId !== null && bestDist < 26;
+    const targetId = newTarget ?? drag?.targetId ?? null;
 
     // Hit-test the operator pills (only rendered while on a target).
     let op: ReduceOp | null = null;
-    if (onTarget) {
+    if (targetId) {
       for (const [candidate, el] of opRefs.current) {
         const r = el.getBoundingClientRect();
         if (
@@ -101,7 +106,7 @@ export function CollapsedView() {
           clientY <= r.bottom
         ) {
           const aNode = pool.find((n) => n.id === id);
-          const bNode = pool.find((n) => n.id === targetId!);
+          const bNode = pool.find((n) => n.id === targetId);
           if (aNode && bNode && isOpLegal(aNode, bNode, candidate)) {
             op = candidate;
           }
@@ -109,7 +114,7 @@ export function CollapsedView() {
         }
       }
     }
-    setDrag({ id, targetId: onTarget ? targetId : null, op });
+    setDrag({ id, targetId, op });
   };
 
   const onCardDragEnd = () => {
