@@ -33,6 +33,12 @@ export default function App() {
     resizeWindow(collapsed).catch(() => void 0);
   }, [collapsed]);
 
+  // Apply the persisted always-on-top preference once on launch so the
+  // Tauri window actually sits above other apps when the user expects it.
+  useEffect(() => {
+    applyAlwaysOnTopOnMount().catch(() => void 0);
+  }, []);
+
   return (
     <div className="relative w-full h-full">
       <motion.div
@@ -86,10 +92,18 @@ async function resizeWindow(collapsed: boolean) {
     );
     const win = getCurrentWindow();
     const size = collapsed
-      ? new LogicalSize(360, 76)
+      ? new LogicalSize(340, 64)
       : new LogicalSize(360, 500);
     await win.setSize(size);
   } catch {
     // Browser preview — no Tauri runtime.
   }
+}
+
+async function applyAlwaysOnTopOnMount() {
+  // Pull the current preference from the store rather than a prop so this
+  // runs after persist has rehydrated.
+  const { preferences } = (await import("./store/gameStore")).useGame.getState();
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  await getCurrentWindow().setAlwaysOnTop(preferences.alwaysOnTop);
 }

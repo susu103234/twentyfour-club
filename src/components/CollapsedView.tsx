@@ -1,17 +1,20 @@
 import { AnimatePresence, motion } from "motion/react";
+import { useEffect, useRef, useState } from "react";
 import { useGame } from "@/store/gameStore";
 import { useUi } from "@/store/uiStore";
 import { formatNumber, formatTime } from "@/lib/format";
 import { isOpLegal, type ReduceNode, type ReduceOp } from "@/features/game/reduce";
+import { buildHint } from "@/features/game/hints";
 
 /**
- * Interactive collapsed strip.
+ * Tight interactive collapsed strip (340×64).
  *
- * In reduce mode each mini-card is tappable — the same selection + combine
- * flow as the expanded board works here. When two cards are selected the
- * operator chips appear in place of the score readout so the window stays
- * at one row. In typed mode the strip is read-only; tapping any card
- * expands the window so the player can type.
+ * Layout:
+ *   [ card card card card ]  · score/ops ·  ? ⚙ ↶ ↻ ⛶
+ *
+ * The ? / ⚙ are always present; ↶ ↻ only appear after a reduction.
+ * Opening settings from here auto-expands the window so the overlay
+ * panel has room to render.
  */
 export function CollapsedView() {
   const hand = useGame((s) => s.hand);
@@ -28,7 +31,10 @@ export function CollapsedView() {
   const undo = useGame((s) => s.undoReduce);
   const resetPool = useGame((s) => s.resetReduce);
   const historyLen = useGame((s) => s.reduceHistory.length);
+  const requestHint = useGame((s) => s.requestHint);
+  const hintLevel = useGame((s) => s.hintLevel);
   const setCollapsed = useUi((s) => s.setCollapsed);
+  const toggleSettings = useUi((s) => s.toggleSettings);
 
   if (!hand) startNewHand();
 
@@ -66,15 +72,15 @@ export function CollapsedView() {
     <div
       data-tauri-drag-region
       onDoubleClick={() => setCollapsed(false)}
-      className="flex items-center gap-2.5 px-3 py-[10px] flex-1 min-w-0"
+      className="flex items-center gap-2 px-2.5 py-[6px] flex-1 min-w-0"
     >
-      <div className="flex items-center gap-[5px] shrink-0" data-no-drag>
+      <div className="flex items-center gap-[4px] shrink-0" data-no-drag>
         <AnimatePresence initial={false}>{renderCards()}</AnimatePresence>
       </div>
 
       <div className="flex-1 min-w-0" />
 
-      <div className="flex items-center gap-1.5 shrink-0" data-no-drag>
+      <div className="flex items-center gap-1 shrink-0" data-no-drag>
         <AnimatePresence mode="wait" initial={false}>
           {showOps ? (
             <motion.div
@@ -93,7 +99,7 @@ export function CollapsedView() {
                     type="button"
                     disabled={!ok}
                     onClick={() => ok && applyOp(op)}
-                    className="token w-7 h-7 text-[15px]"
+                    className="token w-6 h-6 text-[14px]"
                     style={{ opacity: ok ? 1 : 0.25 }}
                   >
                     {op === "-" ? "−" : op}
@@ -108,7 +114,7 @@ export function CollapsedView() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.12 }}
-              className="flex items-center gap-1.5"
+              className="flex items-center pr-0.5"
             >
               {mode === "rush" && rushActive ? (
                 <span className="font-mono tabular-nums text-[13px] text-accent-300">
@@ -123,46 +129,88 @@ export function CollapsedView() {
           )}
         </AnimatePresence>
 
+        {!showOps && (
+          <SubtleIcon title="Hint" onClick={requestHint}>
+            <HintGlyph level={hintLevel} />
+          </SubtleIcon>
+        )}
+        {!showOps && (
+          <SubtleIcon
+            title="Settings"
+            onClick={() => {
+              setCollapsed(false);
+              toggleSettings();
+            }}
+          >
+            <GearGlyph />
+          </SubtleIcon>
+        )}
         {isReduce && historyLen > 0 && !showOps && (
           <>
             <SubtleIcon title="Undo" onClick={undo}>
-              <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-                <path
-                  d="M4 3 L1 6 L4 9 M1 6 H9 a2 2 0 0 1 2 2 V11"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              <UndoGlyph />
             </SubtleIcon>
             <SubtleIcon title="Reset" onClick={resetPool}>
-              <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-                <path
-                  d="M2 6 a4 4 0 1 1 1.5 3.1 M2 3 V6 H5"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              <ResetGlyph />
             </SubtleIcon>
           </>
         )}
-
         <SubtleIcon title="Expand" onClick={() => setCollapsed(false)}>
-          <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-            <path
-              d="M1 5 V1 H5 M7 11 H11 V7"
-              stroke="currentColor"
-              strokeWidth="1.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <ExpandGlyph />
         </SubtleIcon>
       </div>
+
+      <HintBubble />
     </div>
+  );
+}
+
+/** Small floating pill showing the current hint; auto-fades. */
+function HintBubble() {
+  const hand = useGame((s) => s.hand);
+  const hintLevel = useGame((s) => s.hintLevel);
+  const [visibleToken, setVisibleToken] = useState<string>("");
+  const lastLevelRef = useRef(0);
+
+  useEffect(() => {
+    if (hintLevel === 0) {
+      setVisibleToken("");
+      lastLevelRef.current = 0;
+      return;
+    }
+    if (hintLevel !== lastLevelRef.current) {
+      lastLevelRef.current = hintLevel;
+      const tok = `${hand?.id}:${hintLevel}`;
+      setVisibleToken(tok);
+      const t = window.setTimeout(() => {
+        setVisibleToken((v) => (v === tok ? "" : v));
+      }, 5000);
+      return () => window.clearTimeout(t);
+    }
+  }, [hintLevel, hand?.id]);
+
+  if (!hand || !visibleToken) return null;
+  const hint = buildHint(hand.solutions[0], hintLevel || 1);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -3 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -3 }}
+      transition={{ duration: 0.18 }}
+      className="absolute left-1/2 -translate-x-1/2 top-1 rounded-full px-3 py-[3px] text-[11px] font-mono backdrop-blur-md pointer-events-none"
+      style={{
+        background: "rgba(159,179,255,0.1)",
+        border: "1px solid rgba(159,179,255,0.25)",
+        color: "rgb(183,196,255)",
+        maxWidth: "82%",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+      }}
+    >
+      {hint.text}
+    </motion.div>
   );
 }
 
@@ -180,7 +228,7 @@ function SubtleIcon({
       type="button"
       onClick={onClick}
       title={title}
-      className="w-6 h-6 inline-flex items-center justify-center rounded-md text-ink-300 hover:text-ink-50 hover:bg-white/6 transition-colors"
+      className="w-5 h-5 inline-flex items-center justify-center rounded-[6px] text-ink-300 hover:text-ink-50 hover:bg-white/6 transition-colors"
     >
       {children}
     </button>
@@ -203,7 +251,7 @@ function MiniStatic({
       initial={{ opacity: 0, y: 3 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay, type: "spring", stiffness: 300, damping: 24 }}
-      className="min-w-[28px] h-9 px-1.5 rounded-[7px] flex items-center justify-center text-[13px] text-ink-50 font-light tracking-tight tabular-nums"
+      className="min-w-[26px] h-8 px-1.5 rounded-[6px] flex items-center justify-center text-[13px] text-ink-50 font-light tracking-tight tabular-nums"
       style={cardStyle(false)}
     >
       {value}
@@ -229,16 +277,16 @@ function MiniCard({
       onClick={onTap}
       layout
       initial={{ opacity: 0, y: 3, scale: 0.9 }}
-      animate={{ opacity: 1, y: selected ? -1.5 : 0, scale: selected ? 1.03 : 1 }}
+      animate={{ opacity: 1, y: selected ? -1.5 : 0, scale: selected ? 1.04 : 1 }}
       exit={{ opacity: 0, scale: 0.9 }}
       transition={{ type: "spring", stiffness: 320, damping: 26 }}
-      className="relative min-w-[28px] h-9 px-1.5 rounded-[7px] flex items-center justify-center text-[13px] text-ink-50 font-light tracking-tight tabular-nums"
+      className="relative min-w-[26px] h-8 px-1.5 rounded-[6px] flex items-center justify-center text-[13px] text-ink-50 font-light tracking-tight tabular-nums"
       style={cardStyle(selected)}
     >
       {label}
       {order !== -1 && (
         <span
-          className="absolute -top-[3px] -right-[3px] w-3 h-3 inline-flex items-center justify-center rounded-full text-[7px] font-mono"
+          className="absolute -top-[3px] -right-[3px] w-[11px] h-[11px] inline-flex items-center justify-center rounded-full text-[7px] font-mono"
           style={{
             background: "rgb(232,217,160)",
             color: "#1a1a20",
@@ -260,7 +308,87 @@ function cardStyle(selected: boolean): React.CSSProperties {
       ? "1px solid rgba(232,217,160,0.5)"
       : "1px solid rgba(255,255,255,0.06)",
     boxShadow: selected
-      ? "0 4px 10px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 1px rgba(232,217,160,0.22)"
-      : "0 4px 10px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.07)",
+      ? "0 3px 9px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 1px rgba(232,217,160,0.22)"
+      : "0 3px 8px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.07)",
   };
+}
+
+/* ---------- line-only SVG glyphs ---------- */
+
+function HintGlyph({ level }: { level: number }) {
+  // A flame / spark with N dots beside it for hint tier indicator.
+  return (
+    <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+      <path
+        d="M6 2 L6 6 M6 8 L6 8.5"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+      />
+      {level > 0 && (
+        <circle
+          cx="10"
+          cy="2"
+          r="1"
+          fill={level >= 3 ? "rgb(232,217,160)" : level >= 2 ? "rgb(183,196,255)" : "currentColor"}
+        />
+      )}
+    </svg>
+  );
+}
+
+function GearGlyph() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+      <circle cx="6" cy="6" r="2" stroke="currentColor" strokeWidth="1.1" />
+      <path
+        d="M6 1 V2.5 M6 9.5 V11 M1 6 H2.5 M9.5 6 H11 M2.5 2.5 L3.5 3.5 M8.5 8.5 L9.5 9.5 M2.5 9.5 L3.5 8.5 M8.5 3.5 L9.5 2.5"
+        stroke="currentColor"
+        strokeWidth="1.1"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function UndoGlyph() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+      <path
+        d="M4 3 L1 6 L4 9 M1 6 H9 a2 2 0 0 1 2 2 V11"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ResetGlyph() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+      <path
+        d="M2 6 a4 4 0 1 1 1.5 3.1 M2 3 V6 H5"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ExpandGlyph() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+      <path
+        d="M1 5 V1 H5 M7 11 H11 V7"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 }

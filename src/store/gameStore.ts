@@ -119,10 +119,41 @@ const freshStats = (): SessionStats => ({
 const defaultPreferences: Preferences = {
   mode: "chill",
   difficulty: "normal",
-  alwaysOnTop: false,
+  alwaysOnTop: true,
   sound: false,
   inputMode: "reduce",
 };
+
+/**
+ * Heuristic: returns a structurally distinct alternate solution if one
+ * exists, else null. "Distinct" means it's not just a parenthesis or
+ * commutative reorder of the player's expression — we compare the multiset
+ * of operators used, which changes meaningfully between e.g.
+ *   (a + b) * (c + d)   vs   (a - b) * (c - d)  vs  a / (b - c / d).
+ */
+function pickAlternateSolution(solutions: string[], playerExpr: string): string | null {
+  if (solutions.length <= 1) return null;
+  const playerBag = opBag(playerExpr);
+  const playerNorm = normalizeWs(playerExpr);
+  // Prefer a solution that uses a different bag of operators.
+  const distinctBag = solutions.find(
+    (s) => opBag(s) !== playerBag && normalizeWs(s) !== playerNorm
+  );
+  if (distinctBag) return distinctBag;
+  // Fall back to any solution that's at least textually different.
+  return solutions.find((s) => normalizeWs(s) !== playerNorm) ?? null;
+}
+
+function opBag(expr: string): string {
+  return (expr.match(/[+\-×÷*/]/g) ?? [])
+    .map((o) => (o === "*" ? "×" : o === "/" ? "÷" : o))
+    .sort()
+    .join("");
+}
+
+function normalizeWs(s: string): string {
+  return s.replace(/\s+/g, "");
+}
 
 function pointsFor(difficulty: Difficulty, usedHint: boolean): number {
   const base = difficulty === "hard" ? 5 : difficulty === "normal" ? 3 : 2;
@@ -331,11 +362,41 @@ export const useGame = create<GameState>()(
           dailySolvedOn: nextDaily,
         });
 
+        // Auto-advance cadence:
+        //   rush       → 650 ms (existing sprint feel)
+        //   daily      → never (one-shot per day; let the player savour it)
+        //   otherwise  → 1.2 s if this was the only solution
+        //              → 2.6 s if an alt is worth showing (shown via an
+        //                 `alt` feedback follow-up pill)
+        if (mode === "daily") return;
         if (mode === "rush" && rushActive) {
           window.setTimeout(() => {
             const s = get();
             if (s.rushActive) s.nextHand();
           }, 650);
+          return;
+        }
+        const alt = pickAlternateSolution(hand.solutions, input);
+        if (alt) {
+          // After praise fades, surface the alternate.
+          window.setTimeout(() => {
+            const s = get();
+            if (s.feedback.kind === "idle" || s.feedback.kind === "correct") {
+              useGame.setState({
+                feedback: { kind: "correct", praise: `Also: ${alt}`, value: result.value },
+              });
+            }
+          }, 1100);
+          window.setTimeout(() => {
+            const s = get();
+            // Only auto-advance if the player hasn't already moved on.
+            if (s.hand?.id === hand.id) s.nextHand();
+          }, 2600);
+        } else {
+          window.setTimeout(() => {
+            const s = get();
+            if (s.hand?.id === hand.id) s.nextHand();
+          }, 1200);
         }
       },
 
@@ -528,6 +589,16 @@ export const useGame = create<GameState>()(
     {
       name: "24club/state",
       storage: createJSONStorage(() => localStorage),
+      version: 2,
+      migrate: (persisted, version) => {
+        // v1 → v2: force alwaysOnTop to true for existing users so the
+        // floating window actually floats by default.
+        const state = (persisted ?? {}) as { preferences?: Preferences };
+        if (version < 2 && state.preferences) {
+          state.preferences = { ...state.preferences, alwaysOnTop: true };
+        }
+        return state;
+      },
       partialize: (s) => ({
         preferences: s.preferences,
         mode: s.mode,
