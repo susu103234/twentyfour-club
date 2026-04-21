@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, type PanInfo } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useGame } from "@/store/gameStore";
 import { useUi } from "@/store/uiStore";
@@ -25,10 +25,12 @@ export function CollapsedView() {
   const rushActive = useGame((s) => s.rushActive);
   const rushMs = useGame((s) => s.rushTimeMs);
   const inputMode = useGame((s) => s.preferences.inputMode);
+  const bubbleDrag = useGame((s) => s.preferences.bubbleDrag);
   const pool = useGame((s) => s.reducePool);
   const selected = useGame((s) => s.reduceSelected);
   const toggle = useGame((s) => s.toggleReduceSelection);
   const applyOp = useGame((s) => s.applyReduceOp);
+  const commit = useGame((s) => s.commitReduce);
   const undo = useGame((s) => s.undoReduce);
   const resetPool = useGame((s) => s.resetReduce);
   const historyLen = useGame((s) => s.reduceHistory.length);
@@ -40,9 +42,86 @@ export function CollapsedView() {
   if (!hand) startNewHand();
 
   const isReduce = inputMode === "reduce";
-  const showOps = isReduce && selected.length === 2;
-  const a = showOps ? pool.find((n) => n.id === selected[0]) : undefined;
-  const b = showOps ? pool.find((n) => n.id === selected[1]) : undefined;
+  const dragMode = isReduce && bubbleDrag;
+
+  // Drag-mode state: which card is being dragged, which it's over, which
+  // operator pill the pointer is currently hovering. When `targetId` is
+  // set, the right-side icon cluster is swapped out for a 4-op row whose
+  // buttons are the drop targets — it's all one continuous gesture.
+  const stripRef = useRef<HTMLDivElement>(null);
+  const cardRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const opRefs = useRef<Map<ReduceOp, HTMLElement>>(new Map());
+  const [drag, setDrag] = useState<{
+    id: string;
+    targetId: string | null;
+    op: ReduceOp | null;
+  } | null>(null);
+
+  const showOps = isReduce && !dragMode && selected.length === 2;
+  const dragOps = dragMode && drag?.targetId !== null;
+  const a = showOps
+    ? pool.find((n) => n.id === selected[0])
+    : drag && dragOps
+      ? pool.find((n) => n.id === drag.id)
+      : undefined;
+  const b = showOps
+    ? pool.find((n) => n.id === selected[1])
+    : drag && dragOps && drag.targetId
+      ? pool.find((n) => n.id === drag.targetId)
+      : undefined;
+
+  const onCardDrag = (id: string, info: PanInfo) => {
+    const { clientX, clientY } = { clientX: info.point.x, clientY: info.point.y };
+    // Find the nearest other card whose box contains the pointer (or whose
+    // centre is within ~18 px of it — tiny targets deserve generous snap).
+    let targetId: string | null = null;
+    let bestDist = Infinity;
+    for (const [otherId, el] of cardRefs.current) {
+      if (otherId === id) continue;
+      const r = el.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const d = Math.hypot(cx - clientX, cy - clientY);
+      if (d < bestDist) {
+        bestDist = d;
+        targetId = otherId;
+      }
+    }
+    const onTarget = targetId !== null && bestDist < 26;
+
+    // Hit-test the operator pills (only rendered while on a target).
+    let op: ReduceOp | null = null;
+    if (onTarget) {
+      for (const [candidate, el] of opRefs.current) {
+        const r = el.getBoundingClientRect();
+        if (
+          clientX >= r.left &&
+          clientX <= r.right &&
+          clientY >= r.top &&
+          clientY <= r.bottom
+        ) {
+          const aNode = pool.find((n) => n.id === id);
+          const bNode = pool.find((n) => n.id === targetId!);
+          if (aNode && bNode && isOpLegal(aNode, bNode, candidate)) {
+            op = candidate;
+          }
+          break;
+        }
+      }
+    }
+    setDrag({ id, targetId: onTarget ? targetId : null, op });
+  };
+
+  const onCardDragEnd = () => {
+    if (drag?.targetId && drag.op) {
+      const aNode = pool.find((n) => n.id === drag.id);
+      const bNode = pool.find((n) => n.id === drag.targetId);
+      if (aNode && bNode && isOpLegal(aNode, bNode, drag.op)) {
+        commit(aNode.id, bNode.id, drag.op);
+      }
+    }
+    setDrag(null);
+  };
 
   const renderCards = () => {
     if (!isReduce && hand) {
@@ -54,6 +133,29 @@ export function CollapsedView() {
           delay={i * 0.04}
         />
       ));
+    }
+    if (dragMode) {
+      return pool.map((node) => {
+        const isDragged = drag?.id === node.id;
+        const isHoverTarget = drag?.targetId === node.id;
+        return (
+          <DragMiniCard
+            key={node.id}
+            node={node}
+            isDragged={isDragged}
+            isHoverTarget={isHoverTarget}
+            registerRef={(el) => {
+              if (el) cardRefs.current.set(node.id, el);
+              else cardRefs.current.delete(node.id);
+            }}
+            onDragStart={() =>
+              setDrag({ id: node.id, targetId: null, op: null })
+            }
+            onDrag={(info) => onCardDrag(node.id, info)}
+            onDragEnd={onCardDragEnd}
+          />
+        );
+      });
     }
     return pool.map((node) => {
       const order = selected.indexOf(node.id);
@@ -71,6 +173,7 @@ export function CollapsedView() {
 
   return (
     <div
+      ref={stripRef}
       data-tauri-drag-region
       onDoubleClick={() => setCollapsed(false)}
       className="relative flex items-center gap-2 px-2.5 py-[6px] flex-1 min-w-0"
@@ -83,7 +186,65 @@ export function CollapsedView() {
 
       <div className="flex items-center gap-1 shrink-0" data-no-drag>
         <AnimatePresence mode="wait" initial={false}>
-          {showOps ? (
+          {dragOps && a && b ? (
+            <motion.div
+              key="drag-ops"
+              initial={{ opacity: 0, x: 4 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -4 }}
+              transition={{ duration: 0.12 }}
+              className="flex items-center gap-0.5"
+            >
+              {(["+", "-", "×", "÷"] as ReduceOp[]).map((op) => {
+                const ok = isOpLegal(a, b, op);
+                const preview = ok ? formatNumber(combine(a, b, op).node.value) : null;
+                const active = drag?.op === op;
+                const isTargetPreview =
+                  preview !== null && Math.abs(Number(preview) - 24) < 1e-6;
+                return (
+                  <div
+                    key={op}
+                    ref={(el) => {
+                      if (el) opRefs.current.set(op, el);
+                      else opRefs.current.delete(op);
+                    }}
+                    className="w-6 h-7 rounded-[6px] flex flex-col items-center justify-center leading-none"
+                    style={{
+                      background: active
+                        ? "radial-gradient(circle at 30% 30%, rgba(255,245,210,1) 0%, rgba(220,190,100,0.95) 100%)"
+                        : isTargetPreview
+                          ? "rgba(232,217,160,0.22)"
+                          : "rgba(255,255,255,0.06)",
+                      border:
+                        active || isTargetPreview
+                          ? "1px solid rgba(232,217,160,0.7)"
+                          : "1px solid rgba(255,255,255,0.1)",
+                      color:
+                        active
+                          ? "#1c1a10"
+                          : ok
+                            ? "rgb(240,240,248)"
+                            : "rgba(240,240,248,0.25)",
+                      transform: active ? "scale(1.08)" : "scale(1)",
+                      transition: "transform 80ms ease, background 80ms ease",
+                    }}
+                  >
+                    <span className="text-[12px]">
+                      {op === "-" ? "−" : op}
+                    </span>
+                    {preview !== null && (
+                      <span
+                        className="text-[7px] font-mono tabular-nums"
+                        style={{ opacity: 0.7 }}
+                      >
+                        {preview}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </motion.div>
+          ) : showOps ? (
             <motion.div
               key="ops"
               initial={{ opacity: 0, x: 4 }}
@@ -314,6 +475,66 @@ function MiniCard({
         </span>
       )}
     </motion.button>
+  );
+}
+
+/**
+ * Collapsed-strip drag card: same look as MiniCard but grabbable. We keep
+ * flex layout for non-dragged cards; Motion's `drag` just translates the
+ * dragged card via transform so the strip doesn't reflow around it.
+ */
+function DragMiniCard({
+  node,
+  isDragged,
+  isHoverTarget,
+  registerRef,
+  onDragStart,
+  onDrag,
+  onDragEnd,
+}: {
+  node: ReduceNode;
+  isDragged: boolean;
+  isHoverTarget: boolean;
+  registerRef: (el: HTMLElement | null) => void;
+  onDragStart: () => void;
+  onDrag: (info: PanInfo) => void;
+  onDragEnd: () => void;
+}) {
+  return (
+    <motion.div
+      ref={registerRef}
+      drag
+      dragSnapToOrigin
+      dragMomentum={false}
+      dragElastic={0}
+      onDragStart={onDragStart}
+      onDrag={(_, info) => onDrag(info)}
+      onDragEnd={onDragEnd}
+      layout
+      initial={{ opacity: 0, y: 3, scale: 0.9 }}
+      animate={{
+        opacity: 1,
+        y: isDragged ? -1 : 0,
+        scale: isDragged ? 1.12 : isHoverTarget ? 1.06 : 1,
+        rotate: isDragged ? -3 : 0,
+        zIndex: isDragged ? 30 : isHoverTarget ? 2 : 1,
+      }}
+      exit={{ opacity: 0, scale: 0.9 }}
+      transition={{ type: "spring", stiffness: 360, damping: 26 }}
+      className="relative min-w-[26px] h-8 px-1.5 rounded-[6px] flex items-center justify-center text-[13px] text-ink-50 font-light tracking-tight tabular-nums"
+      style={{
+        ...cardStyle(isHoverTarget),
+        cursor: isDragged ? "grabbing" : "grab",
+        touchAction: "none",
+        boxShadow: isHoverTarget
+          ? "0 3px 9px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1), 0 0 0 2px rgba(232,217,160,0.55), 0 0 12px rgba(232,217,160,0.25)"
+          : isDragged
+            ? "0 6px 16px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1)"
+            : undefined,
+      }}
+    >
+      <span style={{ pointerEvents: "none" }}>{formatNumber(node.value)}</span>
+    </motion.div>
   );
 }
 
