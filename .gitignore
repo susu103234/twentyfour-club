@@ -10,4 +10,5 @@ dist-ssr
 # Tauri
 src-tauri/target
 src-tauri/gen
-src-tauri/Cargo.lock
+# Cargo.lock is committed on purpose — reproducible release builds need a
+# pinned dep graph. Do NOT re-add it to ignores.

@@ -7,6 +7,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { AchievementsPanel } from "./components/AchievementsPanel";
 import { AchievementToast } from "./components/AchievementToast";
 import { HistoryPanel } from "./components/HistoryPanel";
+import { SolutionsPanel } from "./components/SolutionsPanel";
 import { FeedbackToast } from "./components/FeedbackToast";
 import { useUi } from "./store/uiStore";
 import { useGame } from "./store/gameStore";
@@ -77,6 +78,7 @@ export default function App() {
           <SettingsPanel />
           <AchievementsPanel />
           <HistoryPanel />
+          <SolutionsPanel />
           <FeedbackToast />
         </div>
       </motion.div>

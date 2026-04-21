@@ -3,8 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import { useGame } from "@/store/gameStore";
 import { useUi } from "@/store/uiStore";
 import { formatNumber, formatTime } from "@/lib/format";
-import { isOpLegal, type ReduceNode, type ReduceOp } from "@/features/game/reduce";
+import { combine, isOpLegal, type ReduceNode, type ReduceOp } from "@/features/game/reduce";
 import { buildHint } from "@/features/game/hints";
+import { OnboardingBubble } from "./OnboardingBubble";
 
 /**
  * Tight interactive collapsed strip (340×64).
@@ -72,7 +73,7 @@ export function CollapsedView() {
     <div
       data-tauri-drag-region
       onDoubleClick={() => setCollapsed(false)}
-      className="flex items-center gap-2 px-2.5 py-[6px] flex-1 min-w-0"
+      className="relative flex items-center gap-2 px-2.5 py-[6px] flex-1 min-w-0"
     >
       <div className="flex items-center gap-[4px] shrink-0" data-no-drag>
         <AnimatePresence initial={false}>{renderCards()}</AnimatePresence>
@@ -93,12 +94,15 @@ export function CollapsedView() {
             >
               {(["+", "-", "×", "÷"] as ReduceOp[]).map((op) => {
                 const ok = a && b ? isOpLegal(a, b, op) : false;
+                const preview =
+                  ok && a && b ? formatNumber(combine(a, b, op).node.value) : null;
                 return (
                   <button
                     key={op}
                     type="button"
                     disabled={!ok}
                     onClick={() => ok && applyOp(op)}
+                    title={preview ? `${a?.value} ${op} ${b?.value} = ${preview}` : undefined}
                     className="token w-6 h-6 text-[14px]"
                     style={{ opacity: ok ? 1 : 0.25 }}
                   >
@@ -161,56 +165,69 @@ export function CollapsedView() {
       </div>
 
       <HintBubble />
+      <OnboardingBubble />
     </div>
   );
 }
 
-/** Small floating pill showing the current hint; auto-fades. */
+/**
+ * Full-width hint overlay. Sits above the cards/icons row for 5s then fades.
+ * We cover the strip (rather than float a tiny pill) because the 64px window
+ * has no room for a pill that doesn't clip the cards underneath.
+ */
 function HintBubble() {
   const hand = useGame((s) => s.hand);
   const hintLevel = useGame((s) => s.hintLevel);
-  const [visibleToken, setVisibleToken] = useState<string>("");
-  const lastLevelRef = useRef(0);
+  const [visible, setVisible] = useState(false);
+  const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (hintLevel === 0) {
-      setVisibleToken("");
-      lastLevelRef.current = 0;
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    if (hintLevel === 0 || !hand) {
+      setVisible(false);
       return;
     }
-    if (hintLevel !== lastLevelRef.current) {
-      lastLevelRef.current = hintLevel;
-      const tok = `${hand?.id}:${hintLevel}`;
-      setVisibleToken(tok);
-      const t = window.setTimeout(() => {
-        setVisibleToken((v) => (v === tok ? "" : v));
-      }, 5000);
-      return () => window.clearTimeout(t);
-    }
+    setVisible(true);
+    timerRef.current = window.setTimeout(() => {
+      setVisible(false);
+      timerRef.current = null;
+    }, 5000);
+    return () => {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
   }, [hintLevel, hand?.id]);
 
-  if (!hand || !visibleToken) return null;
-  const hint = buildHint(hand.solutions[0], hintLevel || 1);
-
   return (
-    <motion.div
-      initial={{ opacity: 0, y: -3 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -3 }}
-      transition={{ duration: 0.18 }}
-      className="absolute left-1/2 -translate-x-1/2 top-1 rounded-full px-3 py-[3px] text-[11px] font-mono backdrop-blur-md pointer-events-none"
-      style={{
-        background: "rgba(159,179,255,0.1)",
-        border: "1px solid rgba(159,179,255,0.25)",
-        color: "rgb(183,196,255)",
-        maxWidth: "82%",
-        whiteSpace: "nowrap",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-      }}
-    >
-      {hint.text}
-    </motion.div>
+    <AnimatePresence>
+      {visible && hand && hintLevel > 0 && (
+        <motion.button
+          type="button"
+          onClick={() => setVisible(false)}
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -4 }}
+          transition={{ duration: 0.18 }}
+          data-no-drag
+          className="absolute inset-x-1.5 top-1.5 bottom-1.5 rounded-[9px] px-3 flex items-center justify-center text-center text-[11px] font-mono backdrop-blur-md cursor-pointer"
+          style={{
+            background: "rgba(24,26,36,0.88)",
+            border: "1px solid rgba(159,179,255,0.35)",
+            color: "rgb(200,210,255)",
+            lineHeight: 1.3,
+            wordBreak: "break-word",
+            zIndex: 20,
+          }}
+        >
+          {buildHint(hand.solutions[0], hintLevel).text}
+        </motion.button>
+      )}
+    </AnimatePresence>
   );
 }
 

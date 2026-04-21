@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install JS deps
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build .app + .dmg
+        run: npm run tauri:build
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist-release
+          cp src-tauri/target/release/bundle/dmg/*.dmg dist-release/ 2>/dev/null || true
+          cp -R src-tauri/target/release/bundle/macos/*.app dist-release/ 2>/dev/null || true
+          ls -la dist-release
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-release/*.dmg
+          draft: true
+          generate_release_notes: true
+          body: |
+            Unsigned macOS build. On first open run:
+            ```
+            xattr -cr /Applications/24club.app
+            ```
+            to bypass Gatekeeper.
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 24club-macos
+          path: dist-release/

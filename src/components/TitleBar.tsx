@@ -9,6 +9,7 @@ export function TitleBar() {
   const toggleSettings = useUi((s) => s.toggleSettings);
   const toggleAchievements = useUi((s) => s.toggleAchievements);
   const toggleHistory = useUi((s) => s.toggleHistory);
+  const toggleSolutions = useUi((s) => s.toggleSolutions);
   const collapsed = useUi((s) => s.collapsed);
 
   return (
@@ -30,6 +31,7 @@ export function TitleBar() {
         </div>
       </div>
       <div className="flex items-center gap-0.5" data-no-drag>
+        <IconBtn onClick={toggleSolutions} title="All solutions" glyph="∑" />
         <IconBtn onClick={toggleHistory} title="Recent hands" glyph="⟳" />
         <IconBtn onClick={toggleAchievements} title="Achievements" glyph="◉" />
         <IconBtn onClick={toggleSettings} title="Settings" glyph="⚙" />

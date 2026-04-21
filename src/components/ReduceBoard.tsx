@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useGame } from "@/store/gameStore";
-import { isOpLegal, type ReduceNode, type ReduceOp } from "@/features/game/reduce";
+import { combine, isOpLegal, type ReduceNode, type ReduceOp } from "@/features/game/reduce";
 import { formatNumber } from "@/lib/format";
 import { TARGET, EPS } from "@/lib/constants";
 
@@ -45,6 +45,11 @@ export function ReduceBoard() {
       <OperatorRow
         active={canPickOp}
         legal={(op) => (a && b ? isOpLegal(a, b, op) : false)}
+        preview={(op) =>
+          a && b && isOpLegal(a, b, op)
+            ? formatNumber(combine(a, b, op).node.value)
+            : null
+        }
         onPick={applyOp}
       />
 
@@ -150,10 +155,11 @@ const OP_LIST: ReduceOp[] = ["+", "-", "×", "÷"];
 interface OpRowProps {
   active: boolean;
   legal: (op: ReduceOp) => boolean;
+  preview: (op: ReduceOp) => string | null;
   onPick: (op: ReduceOp) => void;
 }
 
-function OperatorRow({ active, legal, onPick }: OpRowProps) {
+function OperatorRow({ active, legal, preview, onPick }: OpRowProps) {
   return (
     <AnimatePresence>
       {active && (
@@ -167,16 +173,40 @@ function OperatorRow({ active, legal, onPick }: OpRowProps) {
         >
           {OP_LIST.map((op) => {
             const ok = legal(op);
+            const val = ok ? preview(op) : null;
+            const isTargetPreview =
+              val !== null && Math.abs(Number(val) - TARGET) < EPS;
             return (
               <button
                 key={op}
                 type="button"
                 disabled={!ok}
                 onClick={() => ok && onPick(op)}
-                className="token w-12 h-10 text-lg"
-                style={{ opacity: ok ? 1 : 0.25, cursor: ok ? "pointer" : "default" }}
+                className="token w-12 h-11 text-lg flex flex-col items-center justify-center gap-[1px] leading-none"
+                style={{
+                  opacity: ok ? 1 : 0.25,
+                  cursor: ok ? "pointer" : "default",
+                  borderColor: isTargetPreview
+                    ? "rgba(232,217,160,0.55)"
+                    : undefined,
+                  boxShadow: isTargetPreview
+                    ? "0 0 0 1px rgba(232,217,160,0.28), 0 2px 10px rgba(232,217,160,0.18)"
+                    : undefined,
+                }}
               >
-                {op === "-" ? "−" : op}
+                <span>{op === "-" ? "−" : op}</span>
+                {val !== null && (
+                  <span
+                    className="text-[9px] font-mono tabular-nums"
+                    style={{
+                      color: isTargetPreview
+                        ? "rgb(240,231,200)"
+                        : "rgba(230,230,240,0.55)",
+                    }}
+                  >
+                    {val}
+                  </span>
+                )}
               </button>
             );
           })}

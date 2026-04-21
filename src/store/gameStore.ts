@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import type {
   Difficulty,
   Hand,
+  HandCards,
   HistoryEntry,
   HistoryOutcome,
   InputMode,
@@ -29,6 +30,8 @@ import {
 } from "@/features/game/reduce";
 import { pick, todayKey, uid } from "@/lib/random";
 import { TARGET, EPS } from "@/lib/constants";
+import { solve24, shortest } from "@/features/solver/solver";
+import { classifyDifficulty } from "@/features/generator/difficulty";
 
 const PRAISE = ["Nice", "Clean solve", "Sharp", "Brilliant", "Crisp", "Elegant"] as const;
 const WRONG_TIPS: Record<string, string[]> = {
@@ -78,6 +81,12 @@ interface GameState {
   startNewHand: () => void;
   startDailyHand: () => void;
   replayFromHistory: (id: string) => void;
+  /**
+   * Load a specific 4-card hand. Returns true if the hand has at least one
+   * solution (i.e. was loaded), false for unsolvable (ignored). Used by the
+   * share-code loader and Practice mode.
+   */
+  loadCustomHand: (cards: HandCards) => boolean;
   setInput: (s: string) => void;
   appendToken: (token: string) => void;
   backspace: () => void;
@@ -240,6 +249,37 @@ export const useGame = create<GameState>()(
           reduceHistory: [],
           reduceSelected: [],
         });
+      },
+
+      loadCustomHand: (cards) => {
+        const solutions = solve24([...cards]);
+        if (solutions.length === 0) return false;
+        const dedup = [...new Set(solutions)].sort(
+          (a, b) => a.length - b.length
+        );
+        const canonical = shortest(dedup);
+        const ordered = [
+          canonical,
+          ...dedup.filter((s) => s !== canonical),
+        ].slice(0, 6);
+        const hand: Hand = {
+          cards,
+          solutions: ordered,
+          difficulty: classifyDifficulty(ordered),
+          id: uid(),
+        };
+        set({
+          hand,
+          input: "",
+          feedback: { kind: "idle" },
+          hintLevel: 0,
+          hintUsedOnHand: false,
+          solveStartedAt: Date.now(),
+          reducePool: buildInitialPool(hand.cards),
+          reduceHistory: [],
+          reduceSelected: [],
+        });
+        return true;
       },
 
       replayFromHistory: (id) => {
