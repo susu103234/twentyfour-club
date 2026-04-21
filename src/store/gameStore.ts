@@ -511,14 +511,17 @@ export const useGame = create<GameState>()(
 
       toggleReduceSelection: (nodeId) => {
         const { reducePool, reduceSelected } = get();
-        // Only allow selection among nodes currently in the pool.
         const exists = reducePool.some((n) => n.id === nodeId);
         if (!exists) return;
+        // With a single card left, selection is meaningless — there's
+        // nothing to combine it with. Silently ignore so the UI never
+        // shows contradictory status text like "Tap another card · Ended
+        // at X". The player's only moves here are Undo / Reset / Next.
+        if (reducePool.length < 2) return;
         if (reduceSelected.includes(nodeId)) {
           set({ reduceSelected: reduceSelected.filter((x) => x !== nodeId) });
           return;
         }
-        // Cap at 2: if already 2 selected, rotate (drop oldest, push new).
         const next =
           reduceSelected.length >= 2
             ? [reduceSelected[1], nodeId]

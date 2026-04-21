@@ -48,17 +48,31 @@ export function ReduceBoard() {
         onPick={applyOp}
       />
 
-      <div className="flex items-center justify-center px-1 min-h-[14px]">
-        <span className="text-[11px] text-ink-400">
-          {selected.length === 0 && pool.length > 1 && "Tap two cards to combine"}
-          {selected.length === 1 && "Tap another card"}
-          {selected.length === 2 && "Pick an operator"}
-          {pool.length === 1 && !isTarget(pool[0]) &&
-            `Ended at ${formatNumber(pool[0].value)} — Undo to adjust`}
+      <div className="flex items-center justify-center px-2 min-h-[14px]">
+        <span className="text-[11px] text-ink-400 text-center">
+          {statusText(pool, selected.length)}
         </span>
       </div>
     </div>
   );
+}
+
+/**
+ * Single authoritative status line. Ending-state wins over selection hints
+ * so the player never sees "Tap another card" next to "Ended at -24".
+ */
+function statusText(
+  pool: ReduceNode[],
+  selectedCount: number
+): string {
+  if (pool.length === 1) {
+    return isTarget(pool[0])
+      ? ""
+      : `Ended at ${formatNumber(pool[0].value)} — Undo to adjust`;
+  }
+  if (selectedCount === 2) return "Pick an operator";
+  if (selectedCount === 1) return "Tap another card";
+  return "Tap two cards to combine";
 }
 
 interface CardProps {
@@ -93,9 +107,18 @@ function ReduceCard({ node, selected, selectionOrder, onTap }: CardProps) {
       <span className="text-[28px] text-ink-50 font-light leading-none">
         {formatNumber(node.value)}
       </span>
-      {/* sub-expression for inner nodes */}
+      {/* sub-expression for inner nodes — wraps up to 2 lines so long
+          end-state expressions stay legible instead of being ellipsed */}
       {!isLeaf && (
-        <span className="text-[10px] font-mono text-ink-300 mt-1 px-2 truncate max-w-full">
+        <span
+          className="text-[9.5px] font-mono text-ink-300 mt-1 px-1.5 text-center leading-[1.2] break-words"
+          style={{
+            display: "-webkit-box",
+            WebkitBoxOrient: "vertical",
+            WebkitLineClamp: 2,
+            overflow: "hidden",
+          }}
+        >
           {node.expr}
         </span>
       )}
