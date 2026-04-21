@@ -14,36 +14,71 @@ import { TARGET, EPS } from "@/lib/constants";
  * Drag-to-merge reduce board.
  *
  * Cards sit in fixed slots (no flex reshuffling during drag). Grab one,
- * pull it near another → four operator satellites bloom between the two;
- * keep dragging so the pointer hits a satellite → release to commit. If
- * you release over a card or over no satellite, the card springs back —
- * no modal, no second click.
+ * pull it onto another → four operator satellites appear anchored on the
+ * *target* card (not the pointer) so they stay put while you aim; keep
+ * dragging so the pointer hits a satellite → release to commit.
  *
- * Gesture semantics:
- *   - dragged bubble = left operand, target = right operand (matters for
- *     − and ÷).
- *   - while the pointer is over a satellite we also light up that op on
- *     the card so the player has a preview of the committed value.
- *
- * Endgame:
- *   - when two bubbles remain and some op between them hits 24, the pair
- *     pulses gold and auto-fuses after ~750 ms. Touching the cards again
- *     cancels the countdown — we watch `dragging` for that.
+ * Variants:
+ *   - row: single row (used in the expanded window).
+ *   - compact: up to 2×2 grid (used in the collapsed window).
  */
 
-const CARD_W = 66;
-const CARD_H = 84;
-const GAP = 14;
+type Variant = "row" | "compact";
 
-const OP_DIST = 44;
-const OP_RADIUS = 22;
+interface BubbleConfig {
+  cardW: number;
+  cardH: number;
+  gap: number;
+  opDist: number;
+  opRadius: number;
+  opSize: number;
+  valueText: string;
+  exprText: string;
+  indexText: string;
+  containerH: number;
+  statusHeight: number;
+  hGap: boolean;
+}
 
-const OP_LAYOUT: { op: ReduceOp; dx: number; dy: number }[] = [
-  { op: "+", dx: 0, dy: -OP_DIST },
-  { op: "×", dx: OP_DIST, dy: 0 },
-  { op: "-", dx: 0, dy: OP_DIST },
-  { op: "÷", dx: -OP_DIST, dy: 0 },
-];
+const ROW_CFG: BubbleConfig = {
+  cardW: 66,
+  cardH: 84,
+  gap: 14,
+  opDist: 44,
+  opRadius: 22,
+  opSize: 34,
+  valueText: "24px",
+  exprText: "8.5px",
+  indexText: "8px",
+  containerH: 118,
+  statusHeight: 14,
+  hGap: true,
+};
+
+const COMPACT_CFG: BubbleConfig = {
+  cardW: 60,
+  cardH: 70,
+  gap: 10,
+  opDist: 38,
+  opRadius: 18,
+  opSize: 30,
+  valueText: "19px",
+  exprText: "7.5px",
+  indexText: "7px",
+  containerH: 160,
+  statusHeight: 0,
+  hGap: false,
+};
+
+function opLayout(cfg: BubbleConfig): { op: ReduceOp; dx: number; dy: number }[] {
+  const d = cfg.opDist;
+  return [
+    { op: "+", dx: 0, dy: -d },
+    { op: "×", dx: d, dy: 0 },
+    { op: "-", dx: 0, dy: d },
+    { op: "÷", dx: -d, dy: 0 },
+  ];
+}
 
 interface Slot {
   x: number;
@@ -52,30 +87,76 @@ interface Slot {
 
 interface DragState {
   id: string;
-  /** Pointer in container coords — drives satellite placement. */
+  /** Pointer in container coords — used for op-satellite hit tests. */
   px: number;
   py: number;
   targetId: string | null;
   op: ReduceOp | null;
 }
 
-function slotsFor(n: number, width: number, height: number): Slot[] {
+function slotsFor(
+  n: number,
+  width: number,
+  height: number,
+  cfg: BubbleConfig,
+  variant: Variant
+): Slot[] {
   if (n <= 0) return [];
-  const totalW = n * CARD_W + (n - 1) * GAP;
+  const { cardW, cardH, gap } = cfg;
+
+  if (variant === "compact") {
+    // 2×2 when n=4, 2+1 (centered bottom) when n=3, single centered row
+    // for n≤2. Keeping bottom row aligned with top for n=3 keeps the
+    // centre-of-mass stable as cards fuse.
+    const rows = n > 2 ? 2 : 1;
+    const topCount = n > 2 ? 2 : n;
+    const bottomCount = n > 2 ? n - 2 : 0;
+
+    const gridH = rows * cardH + (rows - 1) * gap;
+    const startY = Math.max(0, (height - gridH) / 2);
+
+    const slot = (row: number, col: number, totalInRow: number): Slot => {
+      const rowW = totalInRow * cardW + (totalInRow - 1) * gap;
+      const sx = (width - rowW) / 2;
+      return {
+        x: sx + col * (cardW + gap),
+        y: startY + row * (cardH + gap),
+      };
+    };
+
+    const out: Slot[] = [];
+    for (let i = 0; i < topCount; i++) out.push(slot(0, i, topCount));
+    for (let i = 0; i < bottomCount; i++) out.push(slot(1, i, bottomCount));
+    return out;
+  }
+
+  const totalW = n * cardW + (n - 1) * gap;
   const startX = Math.max(8, (width - totalW) / 2);
-  const y = Math.max(0, (height - CARD_H) / 2);
+  const y = Math.max(0, (height - cardH) / 2);
   return Array.from({ length: n }, (_, i) => ({
-    x: startX + i * (CARD_W + GAP),
+    x: startX + i * (cardW + gap),
     y,
   }));
 }
 
-export function BubbleBoard() {
+export interface BubbleBoardProps {
+  variant?: Variant;
+  /** Hide status line under the board. */
+  hideStatus?: boolean;
+}
+
+export function BubbleBoard({
+  variant = "row",
+  hideStatus = false,
+}: BubbleBoardProps = {}) {
   const pool = useGame((s) => s.reducePool);
   const commit = useGame((s) => s.commitReduce);
 
+  const cfg = variant === "compact" ? COMPACT_CFG : ROW_CFG;
+  const ops = useMemo(() => opLayout(cfg), [cfg]);
+
   const containerRef = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState({ w: 320, h: 128 });
+  const [size, setSize] = useState({ w: 320, h: cfg.containerH });
 
   useLayoutEffect(() => {
     const el = containerRef.current;
@@ -91,8 +172,8 @@ export function BubbleBoard() {
   }, []);
 
   const slots = useMemo(
-    () => slotsFor(pool.length, size.w, size.h),
-    [pool.length, size.w, size.h]
+    () => slotsFor(pool.length, size.w, size.h, cfg, variant),
+    [pool.length, size.w, size.h, cfg, variant]
   );
   const slotMap = useMemo(() => {
     const m = new Map<string, Slot>();
@@ -102,8 +183,8 @@ export function BubbleBoard() {
 
   const [drag, setDrag] = useState<DragState | null>(null);
 
-  // Auto-finish: exactly two bubbles remain and some op between them hits
-  // 24 — schedule a commit, cancellable by picking up a bubble.
+  // Auto-finish: exactly two bubbles left and some op hits 24. Picking up
+  // a bubble (isDragging) cancels the countdown.
   const isDragging = drag !== null;
   useEffect(() => {
     if (pool.length !== 2 || isDragging) return;
@@ -128,34 +209,34 @@ export function BubbleBoard() {
     const px = p.x;
     const py = p.y;
 
-    // 1) Decide which card is the current target. Rule: a *new* target
-    //    only locks in when the pointer is squarely over another card;
-    //    once locked it stays locked for the rest of the gesture so the
-    //    player can drift toward an operator satellite without the
-    //    satellites vanishing under them. The previous target still wins
-    //    unless the pointer enters a *different* card's body.
+    // Sticky-target: a new target only locks in when the pointer enters
+    // another card's bbox. Once locked it stays locked until another
+    // card's bbox takes over, so the satellites remain stable while the
+    // player aims at one.
     let newTarget: string | null = null;
     for (const n of pool) {
       if (n.id === id) continue;
       const s = slotMap.get(n.id);
       if (!s) continue;
-      const cx = s.x + CARD_W / 2;
-      const cy = s.y + CARD_H / 2;
-      if (Math.abs(px - cx) < CARD_W / 2 && Math.abs(py - cy) < CARD_H / 2) {
+      const cx = s.x + cfg.cardW / 2;
+      const cy = s.y + cfg.cardH / 2;
+      if (
+        Math.abs(px - cx) < cfg.cardW / 2 &&
+        Math.abs(py - cy) < cfg.cardH / 2
+      ) {
         newTarget = n.id;
         break;
       }
     }
     const targetId = newTarget ?? drag?.targetId ?? null;
 
-    // 2) if we have a target, check which operator satellite the pointer hits
     let op: ReduceOp | null = null;
     if (targetId) {
-      const anchor = satelliteAnchor(px, py, slotMap.get(targetId)!);
-      for (const sat of OP_LAYOUT) {
+      const anchor = satelliteAnchor(slotMap.get(targetId)!, cfg);
+      for (const sat of ops) {
         const sx = anchor.x + sat.dx;
         const sy = anchor.y + sat.dy;
-        if (Math.hypot(px - sx, py - sy) < OP_RADIUS) {
+        if (Math.hypot(px - sx, py - sy) < cfg.opRadius) {
           const a = pool.find((n) => n.id === id)!;
           const b = pool.find((n) => n.id === targetId)!;
           if (isOpLegal(a, b, sat.op)) op = sat.op;
@@ -187,15 +268,17 @@ export function BubbleBoard() {
     : null;
   const satellitePos =
     drag?.targetId && targetNode
-      ? satelliteAnchor(drag.px, drag.py, slotMap.get(drag.targetId)!)
+      ? satelliteAnchor(slotMap.get(drag.targetId)!, cfg)
       : null;
 
+  const rootClass = cfg.hGap ? "flex flex-col gap-3" : "flex flex-col gap-1";
+
   return (
-    <div className="flex flex-col gap-3">
+    <div className={rootClass}>
       <div
         ref={containerRef}
         className="relative select-none"
-        style={{ height: CARD_H + 34 }}
+        style={{ height: cfg.containerH, overflow: "visible" }}
       >
         <AnimatePresence initial={false}>
           {pool.map((node) => {
@@ -208,14 +291,15 @@ export function BubbleBoard() {
                 key={node.id}
                 node={node}
                 slot={slot}
+                cfg={cfg}
                 isDragged={isDragged}
                 isHoverTarget={isHoverTarget}
                 primed={primed}
                 onDragStart={() =>
                   setDrag({
                     id: node.id,
-                    px: slot.x + CARD_W / 2,
-                    py: slot.y + CARD_H / 2,
+                    px: slot.x + cfg.cardW / 2,
+                    py: slot.y + cfg.cardH / 2,
                     targetId: null,
                     op: null,
                   })
@@ -233,29 +317,36 @@ export function BubbleBoard() {
             a={draggedNode}
             b={targetNode}
             activeOp={drag?.op ?? null}
+            cfg={cfg}
+            layout={ops}
           />
         )}
       </div>
 
-      <div className="flex items-center justify-center px-2 min-h-[14px]">
-        <span className="text-[11px] text-ink-400 text-center">
-          {statusText(pool, drag)}
-        </span>
-      </div>
+      {!hideStatus && cfg.statusHeight > 0 && (
+        <div
+          className="flex items-center justify-center px-2"
+          style={{ minHeight: cfg.statusHeight }}
+        >
+          <span className="text-[11px] text-ink-400 text-center">
+            {statusText(pool, drag)}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
 
 /**
- * Anchor point for the 4-op satellite menu: midway between the pointer
- * (i.e. the dragged card's centre) and the target card's centre. Using the
- * pointer rather than the dragged card's slot means the satellites track
- * the card as it moves — feels like the ops are spawned by the collision.
+ * Satellite menu anchor: always the *target card's centre*. Pointer-
+ * dependent anchors drift mid-drag, turning operator pills into a moving
+ * target the player can't reliably aim at.
  */
-function satelliteAnchor(px: number, py: number, targetSlot: Slot): Slot {
-  const tx = targetSlot.x + CARD_W / 2;
-  const ty = targetSlot.y + CARD_H / 2;
-  return { x: (px + tx) / 2, y: (py + ty) / 2 };
+function satelliteAnchor(targetSlot: Slot, cfg: BubbleConfig): Slot {
+  return {
+    x: targetSlot.x + cfg.cardW / 2,
+    y: targetSlot.y + cfg.cardH / 2,
+  };
 }
 
 function statusText(pool: ReduceNode[], drag: DragState | null): string {
@@ -278,6 +369,7 @@ function statusText(pool: ReduceNode[], drag: DragState | null): string {
 interface DragCardProps {
   node: ReduceNode;
   slot: Slot;
+  cfg: BubbleConfig;
   isDragged: boolean;
   isHoverTarget: boolean;
   primed: boolean;
@@ -289,6 +381,7 @@ interface DragCardProps {
 function DragCard({
   node,
   slot,
+  cfg,
   isDragged,
   isHoverTarget,
   primed,
@@ -324,8 +417,8 @@ function DragCard({
       style={{
         left: slot.x,
         top: slot.y,
-        width: CARD_W,
-        height: CARD_H,
+        width: cfg.cardW,
+        height: cfg.cardH,
         cursor: "grab",
         zIndex: isDragged ? 20 : 1,
         touchAction: "none",
@@ -342,16 +435,17 @@ function DragCard({
       data-no-drag
     >
       <span
-        className="text-[24px] text-ink-50 font-light leading-none tabular-nums"
-        style={{ pointerEvents: "none" }}
+        className="text-ink-50 font-light leading-none tabular-nums"
+        style={{ pointerEvents: "none", fontSize: cfg.valueText }}
       >
         {formatNumber(node.value)}
       </span>
       {!isLeaf && (
         <span
-          className="text-[8.5px] font-mono text-ink-300 mt-0.5 px-1 text-center leading-[1.15]"
+          className="font-mono text-ink-300 mt-0.5 px-1 text-center leading-[1.15]"
           style={{
             pointerEvents: "none",
+            fontSize: cfg.exprText,
             display: "-webkit-box",
             WebkitBoxOrient: "vertical",
             WebkitLineClamp: 2,
@@ -363,8 +457,8 @@ function DragCard({
       )}
       {isLeaf && node.cardIndex !== undefined && (
         <span
-          className="absolute bottom-1 left-1.5 text-[8px] uppercase tracking-[0.15em] text-ink-400/70"
-          style={{ pointerEvents: "none" }}
+          className="absolute bottom-1 left-1.5 uppercase tracking-[0.15em] text-ink-400/70"
+          style={{ pointerEvents: "none", fontSize: cfg.indexText }}
         >
           #{node.cardIndex + 1}
         </span>
@@ -380,24 +474,28 @@ function OpSatellites({
   a,
   b,
   activeOp,
+  cfg,
+  layout,
 }: {
   anchor: Slot;
   a: ReduceNode;
   b: ReduceNode;
   activeOp: ReduceOp | null;
+  cfg: BubbleConfig;
+  layout: { op: ReduceOp; dx: number; dy: number }[];
 }) {
   return (
     <div
       className="absolute pointer-events-none"
       style={{ left: anchor.x, top: anchor.y, zIndex: 15 }}
     >
-      {OP_LAYOUT.map(({ op, dx, dy }, i) => {
+      {layout.map(({ op, dx, dy }, i) => {
         const ok = isOpLegal(a, b, op);
         const val = ok ? formatNumber(combine(a, b, op).node.value) : null;
         const isTargetPreview =
           val !== null && Math.abs(Number(val) - TARGET) < EPS;
         const active = activeOp === op;
-        const size = 34;
+        const size = cfg.opSize;
         return (
           <motion.div
             key={op}
@@ -437,13 +535,16 @@ function OpSatellites({
                   : "0 4px 14px rgba(0,0,0,0.45)",
             }}
           >
-            <span className="text-[15px] leading-none font-light">
+            <span
+              className="leading-none font-light"
+              style={{ fontSize: size >= 32 ? 15 : 13 }}
+            >
               {op === "-" ? "−" : op}
             </span>
             {val !== null && (
               <span
-                className="text-[7.5px] font-mono leading-none mt-[1px] tabular-nums"
-                style={{ opacity: 0.85 }}
+                className="font-mono leading-none mt-[1px] tabular-nums"
+                style={{ opacity: 0.85, fontSize: size >= 32 ? 7.5 : 6.5 }}
               >
                 {val}
               </span>
