@@ -1,5 +1,19 @@
-import { AnimatePresence, motion, type PanInfo } from "motion/react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  AnimatePresence,
+  motion,
+  useMotionValue,
+  useReducedMotion,
+  useTransform,
+  type PanInfo,
+} from "motion/react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { flushSync } from "react-dom";
 import { useGame } from "@/store/gameStore";
 import {
   combine,
@@ -128,6 +142,18 @@ interface DragState {
   op: ReduceOp | null;
 }
 
+/**
+ * Short-lived choreography context recorded at merge time. Used so the
+ * dragged card can fly into the target's slot (exit) and the freshly
+ * spawned result can bloom out from that same spot (enter).
+ */
+interface MergeCtx {
+  draggedId: string;
+  targetId: string;
+  targetSlot: Slot;
+  draggedSlot: Slot;
+}
+
 function slotsFor(
   n: number,
   width: number,
@@ -216,6 +242,25 @@ export function BubbleBoard({
   }, [pool, slots]);
 
   const [drag, setDrag] = useState<DragState | null>(null);
+  const [mergeCtx, setMergeCtx] = useState<MergeCtx | null>(null);
+  const reducedMotion = useReducedMotion() ?? false;
+
+  // Remember which node ids were in the pool on the previous render so the
+  // current render can spot a freshly-spawned merge result. Used to bloom
+  // the new card from the merge spot instead of wherever its new slot lands.
+  const prevPoolIdsRef = useRef<Set<string>>(new Set());
+  const prevPoolIds = prevPoolIdsRef.current;
+  useEffect(() => {
+    prevPoolIdsRef.current = new Set(pool.map((n) => n.id));
+  }, [pool]);
+
+  // Merge choreography window: once the merge has visually landed, clear
+  // the context so subsequent renders behave normally.
+  useEffect(() => {
+    if (!mergeCtx) return;
+    const t = window.setTimeout(() => setMergeCtx(null), 420);
+    return () => window.clearTimeout(t);
+  }, [mergeCtx]);
 
   // Auto-finish: exactly two bubbles left and some op hits 24. Picking up
   // a bubble (isDragging) cancels the countdown.
@@ -226,10 +271,24 @@ export function BubbleBoard({
     const winner = findWinningOp(a, b);
     if (!winner) return;
     const t = window.setTimeout(() => {
+      // Auto-finish uses the same choreography as a manual drag-release
+      // merge so both paths look consistent.
+      const aSlot = slotMap.get(winner.aId);
+      const bSlot = slotMap.get(winner.bId);
+      if (aSlot && bSlot) {
+        flushSync(() => {
+          setMergeCtx({
+            draggedId: winner.aId,
+            targetId: winner.bId,
+            draggedSlot: aSlot,
+            targetSlot: bSlot,
+          });
+        });
+      }
       commit(winner.aId, winner.bId, winner.op);
     }, 750);
     return () => window.clearTimeout(t);
-  }, [pool, isDragging, commit]);
+  }, [pool, isDragging, commit, slotMap]);
 
   const relPointer = (absX: number, absY: number): Slot | null => {
     const box = containerRef.current?.getBoundingClientRect();
@@ -287,6 +346,23 @@ export function BubbleBoard({
       const a = pool.find((n) => n.id === drag.id);
       const b = pool.find((n) => n.id === drag.targetId);
       if (a && b && isOpLegal(a, b, drag.op)) {
+        const draggedSlot = slotMap.get(a.id);
+        const targetSlot = slotMap.get(b.id);
+        if (draggedSlot && targetSlot) {
+          // flushSync forces mergeCtx into the DOM before the commit-driven
+          // render — so the affected cards render once *with* merge-aware
+          // exit props *before* they're removed from the tree. Without
+          // this, React batches setMergeCtx + commit into one render and
+          // AnimatePresence reads stale exit props from the prior render.
+          flushSync(() => {
+            setMergeCtx({
+              draggedId: a.id,
+              targetId: b.id,
+              draggedSlot,
+              targetSlot,
+            });
+          });
+        }
         commit(a.id, b.id, drag.op);
       }
     }
@@ -320,6 +396,8 @@ export function BubbleBoard({
             if (!slot) return null;
             const isDragged = drag?.id === node.id;
             const isHoverTarget = drag?.targetId === node.id;
+            const isMergeResult =
+              mergeCtx !== null && !prevPoolIds.has(node.id);
             return (
               <DragCard
                 key={node.id}
@@ -330,6 +408,9 @@ export function BubbleBoard({
                 isHoverTarget={isHoverTarget}
                 satellitesOpen={drag?.targetId != null}
                 primed={primed}
+                mergeCtx={mergeCtx}
+                isMergeResult={isMergeResult}
+                reducedMotion={reducedMotion}
                 onDragStart={() =>
                   setDrag({
                     id: node.id,
@@ -346,14 +427,16 @@ export function BubbleBoard({
           })}
         </AnimatePresence>
 
-        {draggedNode && targetNode && satellitePos && (
+        {draggedNode && targetNode && satellitePos && drag && (
           <OpSatellites
             anchor={satellitePos}
+            pointer={{ x: drag.px, y: drag.py }}
             a={draggedNode}
             b={targetNode}
-            activeOp={drag?.op ?? null}
+            activeOp={drag.op ?? null}
             cfg={cfg}
             layout={ops}
+            reducedMotion={reducedMotion}
           />
         )}
       </div>
@@ -410,6 +493,9 @@ interface DragCardProps {
   /** Any satellites are open — let the dragged card fade so they show. */
   satellitesOpen: boolean;
   primed: boolean;
+  mergeCtx: MergeCtx | null;
+  isMergeResult: boolean;
+  reducedMotion: boolean;
   onDragStart: () => void;
   onDrag: (info: PanInfo) => void;
   onDragEnd: () => void;
@@ -423,12 +509,96 @@ function DragCard({
   isHoverTarget,
   satellitesOpen,
   primed,
+  mergeCtx,
+  isMergeResult,
+  reducedMotion,
   onDragStart,
   onDrag,
   onDragEnd,
 }: DragCardProps) {
   const isLeaf = node.children === undefined;
   const fadeForSatellites = isDragged && satellitesOpen;
+
+  // Shared motion values for drag offset. Binding these to motion.div via
+  // `style.x/y` (below) lets framer drive them during drag *and* lets us
+  // derive rotate + shadow depth off the same physics — so tilt and depth
+  // settle back to 0 together on release without extra bookkeeping.
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+
+  // Displacement-based tilt — tracks lateral drag like a tilted index card.
+  // Returns to 0 automatically when snap-to-origin brings x back to 0.
+  const rotate = useTransform(x, [-90, 0, 90], [3, 0, -3], { clamp: true });
+  // Depth shadow: stronger the farther from home (simulates "lifted off").
+  const shadowStrength = useTransform(
+    [x, y] as const,
+    (latest) => {
+      const [lx, ly] = latest as [number, number];
+      return Math.min(1, Math.hypot(lx, ly) / 120);
+    }
+  );
+  const shadowBlur = useTransform(shadowStrength, (s) => 16 + s * 24);
+  const shadowLift = useTransform(shadowStrength, (s) => 8 + s * 16);
+  const shadowAlpha = useTransform(shadowStrength, (s) => 0.32 + s * 0.22);
+  const liftedBoxShadow = useTransform(
+    [shadowLift, shadowBlur, shadowAlpha] as const,
+    (latest) => {
+      const [lift, blur, alpha] = latest as [number, number, number];
+      return `0 ${lift}px ${blur}px rgba(0,0,0,${alpha}), 0 1px 0 rgba(255,255,255,0.12) inset, 0 -1px 0 rgba(0,0,0,0.5) inset`;
+    }
+  );
+
+  // --- Merge choreography -------------------------------------------------
+  //
+  // Three roles a card can play during a merge:
+  //   • dragged  → fly into the target slot, then fade
+  //   • target   → shrink in place with a soft fade
+  //   • result   → bloom out of the target slot into its new home
+  // All other cards animate normally via CSS left/top on the reshuffle.
+  const isMergeDragged = mergeCtx?.draggedId === node.id;
+  const isMergeTarget = mergeCtx?.targetId === node.id;
+
+  const initial = (() => {
+    if (isMergeResult && mergeCtx) {
+      // Start visually at the target slot, then slide home.
+      return {
+        opacity: 0,
+        scale: reducedMotion ? 0.92 : 0.6,
+        x: mergeCtx.targetSlot.x - slot.x,
+        y: mergeCtx.targetSlot.y - slot.y,
+      };
+    }
+    return { opacity: 0, scale: reducedMotion ? 0.96 : 0.88, x: 0, y: 0 };
+  })();
+
+  const exit = (() => {
+    if (isMergeDragged && mergeCtx) {
+      // Fly from current (own) slot into the target slot — the exit transform
+      // is the delta between the two anchors.
+      return {
+        opacity: 0,
+        scale: 0.65,
+        x: mergeCtx.targetSlot.x - slot.x,
+        y: mergeCtx.targetSlot.y - slot.y,
+        transition: {
+          duration: reducedMotion ? 0.14 : 0.22,
+          ease: [0.4, 0, 0.2, 1] as const,
+        },
+      };
+    }
+    if (isMergeTarget) {
+      return {
+        opacity: 0,
+        scale: 0.55,
+        transition: {
+          duration: reducedMotion ? 0.14 : 0.22,
+          ease: [0.4, 0, 0.2, 1] as const,
+        },
+      };
+    }
+    return { opacity: 0, scale: 0.7 };
+  })();
+
   return (
     <motion.div
       drag
@@ -439,14 +609,22 @@ function DragCard({
       onDragStart={onDragStart}
       onDrag={(_, info) => onDrag(info)}
       onDragEnd={onDragEnd}
-      initial={{ opacity: 0, scale: 0.88 }}
+      initial={initial}
       animate={{
         opacity: fadeForSatellites ? 0.55 : 1,
         scale: isDragged ? 1.035 : isHoverTarget ? 1.025 : 1,
-        rotate: isDragged ? -1.5 : 0,
+        // Keep x/y on 0 when not dragging; motion's drag handler writes to
+        // the motionValue directly while dragging, so `x/y: 0` in animate is
+        // the "home" target for snap-back / merge-result entrance.
+        x: 0,
+        y: 0,
       }}
-      exit={{ opacity: 0, scale: 0.7 }}
-      transition={CARD_SPRING}
+      exit={exit}
+      transition={
+        reducedMotion
+          ? { duration: 0.14, ease: [0.4, 0, 0.2, 1] }
+          : CARD_SPRING
+      }
       className="absolute card-face flex-col gap-0.5"
       style={{
         left: slot.x,
@@ -454,15 +632,21 @@ function DragCard({
         width: cfg.cardW,
         height: cfg.cardH,
         cursor: "grab",
-        zIndex: isDragged ? 20 : 1,
+        zIndex: isDragged ? 20 : isMergeDragged ? 15 : 1,
         touchAction: "none",
+        x,
+        y,
+        rotate: isDragged ? rotate : 0,
         transition: `left 260ms ${EASE_CSS}, top 260ms ${EASE_CSS}, box-shadow 220ms ${EASE_CSS}`,
-        boxShadow: isHoverTarget
-          ? "0 10px 24px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.1) inset, 0 -1px 0 rgba(0,0,0,0.45) inset, 0 0 0 2px rgba(232,217,160,0.65), 0 0 22px rgba(232,217,160,0.28)"
-          : primed
-            ? "0 10px 24px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.09) inset, 0 -1px 0 rgba(0,0,0,0.45) inset, 0 0 0 1px rgba(232,217,160,0.45)"
-            : isDragged
-              ? "0 14px 32px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.12) inset, 0 -1px 0 rgba(0,0,0,0.5) inset"
+        // When dragged, the shadow is driven by a motion value that tracks
+        // drag distance — gives the card a lifted, weighty feel that settles
+        // back to rest as x/y snap home on release.
+        boxShadow: isDragged
+          ? liftedBoxShadow
+          : isHoverTarget
+            ? "0 10px 24px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.1) inset, 0 -1px 0 rgba(0,0,0,0.45) inset, 0 0 0 2px rgba(232,217,160,0.65), 0 0 22px rgba(232,217,160,0.28)"
+            : primed
+              ? "0 10px 24px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.09) inset, 0 -1px 0 rgba(0,0,0,0.45) inset, 0 0 0 1px rgba(232,217,160,0.45)"
               : undefined,
       }}
       data-no-drag
@@ -504,19 +688,28 @@ function DragCard({
 
 function OpSatellites({
   anchor,
+  pointer,
   a,
   b,
   activeOp,
   cfg,
   layout,
+  reducedMotion,
 }: {
   anchor: Slot;
+  pointer: Slot;
   a: ReduceNode;
   b: ReduceNode;
   activeOp: ReduceOp | null;
   cfg: BubbleConfig;
   layout: { op: ReduceOp; dx: number; dy: number }[];
+  reducedMotion: boolean;
 }) {
+  // Magnet range: a satellite within MAGNET_RANGE px of the pointer gets
+  // pulled scale-wise toward the pointer, giving the iOS Dock "sensing"
+  // feel. Inside opRadius the active-state scale takes over.
+  const MAGNET_RANGE = cfg.opRadius * 1.9;
+
   return (
     <div
       className="absolute pointer-events-none"
@@ -529,25 +722,44 @@ function OpSatellites({
         const active = activeOp === op;
         const size = cfg.opSize;
         const glyphSize = Math.round(size * 0.48);
+
+        // Satellites live inside a container positioned at `anchor`, so the
+        // pointer is still in container-coords and the satellite centre is
+        // (anchor + {dx,dy}).
+        const sx = anchor.x + dx;
+        const sy = anchor.y + dy;
+        const dist = Math.hypot(pointer.x - sx, pointer.y - sy);
+        const magnetT = reducedMotion
+          ? 0
+          : Math.max(0, 1 - dist / MAGNET_RANGE);
+        const magnetScale = 1 + magnetT * 0.08;
+        const targetScale = active ? 1.12 : magnetScale;
+
         return (
           <motion.div
             key={op}
-            initial={{ opacity: 0, scale: 0.72, x: -size / 2, y: -size / 2 }}
+            initial={{
+              opacity: 0,
+              scale: reducedMotion ? 0.92 : 0.72,
+              x: -size / 2,
+              y: -size / 2,
+            }}
             animate={{
               opacity: ok ? 1 : 0.35,
-              scale: active ? 1.12 : 1,
+              scale: targetScale,
               x: dx - size / 2,
               y: dy - size / 2,
             }}
             exit={{
               opacity: 0,
-              scale: 0.7,
+              scale: reducedMotion ? 0.92 : 0.7,
               transition: { duration: 0.14, ease: [0.4, 0, 0.2, 1] },
             }}
-            transition={{
-              ...SATELLITE_SPRING,
-              delay: i * 0.022,
-            }}
+            transition={
+              reducedMotion
+                ? { duration: 0.14, ease: [0.4, 0, 0.2, 1] }
+                : { ...SATELLITE_SPRING, delay: i * 0.022 }
+            }
             className="absolute rounded-full flex items-center justify-center"
             style={{
               width: size,
