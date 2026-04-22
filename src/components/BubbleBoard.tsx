@@ -47,8 +47,8 @@ const ROW_CFG: BubbleConfig = {
   cardH: 84,
   gap: 14,
   opDist: 44,
-  opRadius: 22,
-  opSize: 34,
+  opRadius: 21,
+  opSize: 42,
   valueText: "24px",
   exprText: "8.5px",
   indexText: "8px",
@@ -63,8 +63,8 @@ const COMPACT_CFG: BubbleConfig = {
   cardH: 58,
   gap: 8,
   opDist: 36,
-  opRadius: 23,
-  opSize: 46,
+  opRadius: 25,
+  opSize: 50,
   valueText: "18px",
   exprText: "7px",
   indexText: "0px",
@@ -298,6 +298,7 @@ export function BubbleBoard({
                 cfg={cfg}
                 isDragged={isDragged}
                 isHoverTarget={isHoverTarget}
+                satellitesOpen={drag?.targetId != null}
                 primed={primed}
                 onDragStart={() =>
                   setDrag({
@@ -376,6 +377,8 @@ interface DragCardProps {
   cfg: BubbleConfig;
   isDragged: boolean;
   isHoverTarget: boolean;
+  /** Any satellites are open — let the dragged card fade so they show. */
+  satellitesOpen: boolean;
   primed: boolean;
   onDragStart: () => void;
   onDrag: (info: PanInfo) => void;
@@ -388,12 +391,14 @@ function DragCard({
   cfg,
   isDragged,
   isHoverTarget,
+  satellitesOpen,
   primed,
   onDragStart,
   onDrag,
   onDragEnd,
 }: DragCardProps) {
   const isLeaf = node.children === undefined;
+  const fadeForSatellites = isDragged && satellitesOpen;
   return (
     <motion.div
       drag
@@ -405,7 +410,7 @@ function DragCard({
       onDragEnd={onDragEnd}
       initial={{ opacity: 0, scale: 0.6 }}
       animate={{
-        opacity: 1,
+        opacity: fadeForSatellites ? 0.55 : 1,
         scale: isDragged ? 1.06 : isHoverTarget ? 1.04 : 1,
         rotate: isDragged ? -2 : 0,
       }}
@@ -491,7 +496,7 @@ function OpSatellites({
   return (
     <div
       className="absolute pointer-events-none"
-      style={{ left: anchor.x, top: anchor.y, zIndex: 15 }}
+      style={{ left: anchor.x, top: anchor.y, zIndex: 30 }}
     >
       {layout.map(({ op, dx, dy }, i) => {
         const ok = isOpLegal(a, b, op);

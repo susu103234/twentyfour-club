@@ -8,15 +8,13 @@ import { BubbleBoard } from "./BubbleBoard";
 import { OnboardingBubble } from "./OnboardingBubble";
 
 /**
- * Minimal 180×220 panel.
+ * Minimal 180×200 HUD.
  *
- *   [ · ? ⚙ ↶ ↻ ⛶ ]  ← tight icon bar (timer if rush, else plain)
- *   [               ]
- *   [  card   card  ]  ← BubbleBoard compact (drag mode)
- *   [  card   card  ]     or static 2×2 tap-to-expand fallback.
- *
- * Stripped to the essentials: no score, no status text, no padding we
- * don't need. The window should feel like a tiny HUD, not a dialog.
+ * There is no dedicated icon bar — tool glyphs float in the top-right as
+ * a dim cluster (hover to emphasise), and the bubble grid fills the
+ * whole window beneath them. The entire background is a tauri-drag-
+ * region; only interactive leaves (icons, cards) opt out with
+ * data-no-drag, so the user can grab the window by any empty pixel.
  */
 export function CollapsedView() {
   const hand = useGame((s) => s.hand);
@@ -43,55 +41,9 @@ export function CollapsedView() {
     <div
       data-tauri-drag-region
       onDoubleClick={() => setCollapsed(false)}
-      className="relative flex flex-col flex-1 min-w-0 min-h-0"
+      className="relative flex-1 min-w-0 min-h-0"
     >
-      {/* Top strip: rush timer (when active) on the left, tight icon
-          cluster on the right. In chill mode the left is blank — the
-          score lives in the expanded window. */}
-      <div
-        className="flex items-center justify-between px-2 pt-1 pb-0 shrink-0"
-        data-no-drag
-      >
-        <div className="flex items-center min-w-0">
-          {mode === "rush" && rushActive && (
-            <span className="font-mono tabular-nums text-[11px] text-accent-300">
-              {formatTime(rushMs)}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center">
-          <SubtleIcon title="Hint" onClick={requestHint}>
-            <HintGlyph level={hintLevel} />
-          </SubtleIcon>
-          {isReduce && historyLen > 0 && (
-            <SubtleIcon title="Undo" onClick={undo}>
-              <UndoGlyph />
-            </SubtleIcon>
-          )}
-          {isReduce && historyLen > 0 && (
-            <SubtleIcon title="Reset" onClick={resetPool}>
-              <ResetGlyph />
-            </SubtleIcon>
-          )}
-          <SubtleIcon
-            title="Settings"
-            onClick={() => {
-              setCollapsed(false);
-              toggleSettings();
-            }}
-          >
-            <GearGlyph />
-          </SubtleIcon>
-          <SubtleIcon title="Expand" onClick={() => setCollapsed(false)}>
-            <ExpandGlyph />
-          </SubtleIcon>
-        </div>
-      </div>
-
-      <div
-        className="flex-1 min-h-0 px-1 pb-1 flex items-center justify-center"
-        data-no-drag
-      >
+      <div className="absolute inset-0 flex items-center justify-center px-1 py-1">
         {dragMode ? (
           <div className="w-full">
             <BubbleBoard variant="compact" hideStatus />
@@ -101,6 +53,42 @@ export function CollapsedView() {
         )}
       </div>
 
+      {/* Floating tool cluster — sits above empty top space, dim until
+          the cursor is over it. The wrapping div stays drag-region so
+          gaps between icons still drag the window. */}
+      <div className="absolute top-1 right-1 flex items-center opacity-45 hover:opacity-100 transition-opacity z-10">
+        {mode === "rush" && rushActive && (
+          <span className="font-mono tabular-nums text-[10px] text-accent-300 pr-1 pointer-events-none">
+            {formatTime(rushMs)}
+          </span>
+        )}
+        <SubtleIcon title="Hint" onClick={requestHint}>
+          <HintGlyph level={hintLevel} />
+        </SubtleIcon>
+        {isReduce && historyLen > 0 && (
+          <SubtleIcon title="Undo" onClick={undo}>
+            <UndoGlyph />
+          </SubtleIcon>
+        )}
+        {isReduce && historyLen > 0 && (
+          <SubtleIcon title="Reset" onClick={resetPool}>
+            <ResetGlyph />
+          </SubtleIcon>
+        )}
+        <SubtleIcon
+          title="Settings"
+          onClick={() => {
+            setCollapsed(false);
+            toggleSettings();
+          }}
+        >
+          <GearGlyph />
+        </SubtleIcon>
+        <SubtleIcon title="Expand" onClick={() => setCollapsed(false)}>
+          <ExpandGlyph />
+        </SubtleIcon>
+      </div>
+
       <HintBubble />
       <OnboardingBubble />
     </div>
@@ -108,9 +96,8 @@ export function CollapsedView() {
 }
 
 /**
- * Static 2×2 grid shown when drag-mode is off. Any tap opens the main
- * window — the tap-reduce op picker and the typed keypad both need more
- * room than 240 px, so we don't try to fit them here.
+ * Fallback grid for non-drag modes: any tap opens the main window since
+ * the tap-reduce op picker and the typed keypad both need more room.
  */
 function StaticCardGrid({ onExpand }: { onExpand: () => void }) {
   const hand = useGame((s) => s.hand);
@@ -122,6 +109,7 @@ function StaticCardGrid({ onExpand }: { onExpand: () => void }) {
           key={`${hand.id}-${i}`}
           type="button"
           onClick={onExpand}
+          data-no-drag
           initial={{ opacity: 0, y: 4, scale: 0.92 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{
@@ -142,11 +130,6 @@ function StaticCardGrid({ onExpand }: { onExpand: () => void }) {
   );
 }
 
-/**
- * Overlay hint bubble that briefly covers the content area when the user
- * taps the hint icon. Covers rather than floats because the collapsed
- * window is small enough that a pill would clip the cards underneath.
- */
 function HintBubble() {
   const hand = useGame((s) => s.hand);
   const hintLevel = useGame((s) => s.hintLevel);
@@ -181,12 +164,12 @@ function HintBubble() {
         <motion.button
           type="button"
           onClick={() => setVisible(false)}
+          data-no-drag
           initial={{ opacity: 0, y: -4 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -4 }}
           transition={{ duration: 0.18 }}
-          data-no-drag
-          className="absolute inset-2 top-8 rounded-[9px] px-3 flex items-center justify-center text-center text-[11px] font-mono backdrop-blur-md cursor-pointer"
+          className="absolute inset-2 rounded-[9px] px-3 flex items-center justify-center text-center text-[11px] font-mono backdrop-blur-md cursor-pointer"
           style={{
             background: "rgba(24,26,36,0.88)",
             border: "1px solid rgba(159,179,255,0.35)",
@@ -217,7 +200,8 @@ function SubtleIcon({
       type="button"
       onClick={onClick}
       title={title}
-      className="w-5 h-5 inline-flex items-center justify-center rounded-[6px] text-ink-300 hover:text-ink-50 hover:bg-white/6 transition-colors"
+      data-no-drag
+      className="w-[18px] h-[18px] inline-flex items-center justify-center rounded-[5px] text-ink-300 hover:text-ink-50 hover:bg-white/10 transition-colors"
     >
       {children}
     </button>
@@ -228,7 +212,7 @@ function SubtleIcon({
 
 function HintGlyph({ level }: { level: number }) {
   return (
-    <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+    <svg width="9" height="9" viewBox="0 0 12 12" fill="none">
       <path
         d="M6 2 L6 6 M6 8 L6 8.5"
         stroke="currentColor"
@@ -255,7 +239,7 @@ function HintGlyph({ level }: { level: number }) {
 
 function GearGlyph() {
   return (
-    <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+    <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
       <circle cx="6" cy="6" r="2" stroke="currentColor" strokeWidth="1.1" />
       <path
         d="M6 1 V2.5 M6 9.5 V11 M1 6 H2.5 M9.5 6 H11 M2.5 2.5 L3.5 3.5 M8.5 8.5 L9.5 9.5 M2.5 9.5 L3.5 8.5 M8.5 3.5 L9.5 2.5"
@@ -269,7 +253,7 @@ function GearGlyph() {
 
 function UndoGlyph() {
   return (
-    <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+    <svg width="9" height="9" viewBox="0 0 12 12" fill="none">
       <path
         d="M4 3 L1 6 L4 9 M1 6 H9 a2 2 0 0 1 2 2 V11"
         stroke="currentColor"
@@ -283,7 +267,7 @@ function UndoGlyph() {
 
 function ResetGlyph() {
   return (
-    <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+    <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
       <path
         d="M2 6 a4 4 0 1 1 1.5 3.1 M2 3 V6 H5"
         stroke="currentColor"
@@ -297,7 +281,7 @@ function ResetGlyph() {
 
 function ExpandGlyph() {
   return (
-    <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+    <svg width="9" height="9" viewBox="0 0 12 12" fill="none">
       <path
         d="M1 5 V1 H5 M7 11 H11 V7"
         stroke="currentColor"

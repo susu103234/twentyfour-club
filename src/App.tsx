@@ -94,7 +94,7 @@ async function resizeWindow(collapsed: boolean) {
     );
     const win = getCurrentWindow();
     const size = collapsed
-      ? new LogicalSize(180, 220)
+      ? new LogicalSize(180, 200)
       : new LogicalSize(360, 500);
     await win.setSize(size);
   } catch {
