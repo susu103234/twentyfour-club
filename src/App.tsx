@@ -1,5 +1,4 @@
 import { useEffect } from "react";
-import { motion, AnimatePresence } from "motion/react";
 import { TitleBar } from "./components/TitleBar";
 import { ExpandedView } from "./components/ExpandedView";
 import { CollapsedView } from "./components/CollapsedView";
@@ -42,46 +41,26 @@ export default function App() {
 
   return (
     <div className="relative w-full h-full">
-      <motion.div
-        layout
-        transition={{ type: "spring", stiffness: 240, damping: 28, mass: 0.8 }}
-        className="relative flex flex-col glass rounded-[14px] overflow-hidden h-full"
-      >
+      <div className="relative flex flex-col glass rounded-[14px] overflow-hidden h-full">
         {!collapsed && <TitleBar />}
         {!collapsed && <div className="divider" />}
         <div className="relative flex-1 flex flex-col min-h-0">
-          <AnimatePresence mode="wait" initial={false}>
-            {collapsed ? (
-              <motion.div
-                key="collapsed"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.12 }}
-                className="flex flex-1"
-              >
-                <CollapsedView />
-              </motion.div>
-            ) : (
-              <motion.div
-                key="expanded"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.14 }}
-                className="flex flex-1 flex-col min-h-0"
-              >
-                <ExpandedView />
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {collapsed ? (
+            <div className="flex flex-1" data-tauri-drag-region>
+              <CollapsedView />
+            </div>
+          ) : (
+            <div className="flex flex-1 flex-col min-h-0">
+              <ExpandedView />
+            </div>
+          )}
           <SettingsPanel />
           <AchievementsPanel />
           <HistoryPanel />
           <SolutionsPanel />
           <FeedbackToast />
         </div>
-      </motion.div>
+      </div>
       <AchievementToast />
     </div>
   );
@@ -94,7 +73,7 @@ async function resizeWindow(collapsed: boolean) {
     );
     const win = getCurrentWindow();
     const size = collapsed
-      ? new LogicalSize(180, 200)
+      ? new LogicalSize(280, 68)
       : new LogicalSize(360, 500);
     await win.setSize(size);
   } catch {

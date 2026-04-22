@@ -15,9 +15,9 @@
       {
         "label": "main",
         "title": "24club",
-        "width": 340,
-        "height": 64,
-        "minWidth": 300,
+        "width": 280,
+        "height": 68,
+        "minWidth": 260,
         "minHeight": 60,
         "resizable": true,
         "decorations": false,
