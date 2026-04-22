@@ -74,6 +74,36 @@ const COMPACT_CFG: BubbleConfig = {
   showMeta: false,
 };
 
+/**
+ * Spring presets. Tuned for an "arrives and settles" feel — low overshoot,
+ * quick to damp, no lingering bounce. Mirrors iOS UIKit defaults more than
+ * framer-motion's playful defaults.
+ */
+const CARD_SPRING = {
+  type: "spring",
+  stiffness: 320,
+  damping: 30,
+  mass: 0.6,
+} as const;
+
+const SATELLITE_SPRING = {
+  type: "spring",
+  stiffness: 420,
+  damping: 28,
+  mass: 0.55,
+} as const;
+
+/** Snap-back after a released drag. A touch softer than the active-pickup
+ *  spring so the card "floats home" instead of snapping. */
+const SNAP_BACK = {
+  bounceStiffness: 240,
+  bounceDamping: 26,
+} as const;
+
+/** CSS easing that matches the spring's feel — used for properties that
+ *  motion doesn't animate (box-shadow, left, top on slot reshuffle). */
+const EASE_CSS = "cubic-bezier(0.2, 0.8, 0.2, 1)";
+
 function opLayout(cfg: BubbleConfig): { op: ReduceOp; dx: number; dy: number }[] {
   const d = cfg.opDist;
   return [
@@ -405,23 +435,18 @@ function DragCard({
       dragSnapToOrigin
       dragMomentum={false}
       dragElastic={0}
+      dragTransition={SNAP_BACK}
       onDragStart={onDragStart}
       onDrag={(_, info) => onDrag(info)}
       onDragEnd={onDragEnd}
-      initial={{ opacity: 0, scale: 0.6 }}
+      initial={{ opacity: 0, scale: 0.88 }}
       animate={{
         opacity: fadeForSatellites ? 0.55 : 1,
-        scale: isDragged ? 1.06 : isHoverTarget ? 1.04 : 1,
-        rotate: isDragged ? -2 : 0,
+        scale: isDragged ? 1.035 : isHoverTarget ? 1.025 : 1,
+        rotate: isDragged ? -1.5 : 0,
       }}
-      exit={{ opacity: 0, scale: 0.4 }}
-      transition={{
-        type: "spring",
-        stiffness: 260,
-        damping: 24,
-        mass: 0.8,
-      }}
-      whileTap={{ scale: 1.02 }}
+      exit={{ opacity: 0, scale: 0.7 }}
+      transition={CARD_SPRING}
       className="absolute card-face flex-col gap-0.5"
       style={{
         left: slot.x,
@@ -431,8 +456,7 @@ function DragCard({
         cursor: "grab",
         zIndex: isDragged ? 20 : 1,
         touchAction: "none",
-        transition:
-          "left 280ms cubic-bezier(0.2,0.8,0.2,1), top 280ms cubic-bezier(0.2,0.8,0.2,1)",
+        transition: `left 260ms ${EASE_CSS}, top 260ms ${EASE_CSS}, box-shadow 220ms ${EASE_CSS}`,
         boxShadow: isHoverTarget
           ? "0 10px 24px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.1) inset, 0 -1px 0 rgba(0,0,0,0.45) inset, 0 0 0 2px rgba(232,217,160,0.65), 0 0 22px rgba(232,217,160,0.28)"
           : primed
@@ -508,20 +532,21 @@ function OpSatellites({
         return (
           <motion.div
             key={op}
-            initial={{ opacity: 0, scale: 0.3, x: -size / 2, y: -size / 2 }}
+            initial={{ opacity: 0, scale: 0.72, x: -size / 2, y: -size / 2 }}
             animate={{
               opacity: ok ? 1 : 0.35,
-              scale: active ? 1.14 : 1,
+              scale: active ? 1.12 : 1,
               x: dx - size / 2,
               y: dy - size / 2,
             }}
-            exit={{ opacity: 0, scale: 0.3, transition: { duration: 0.12 } }}
+            exit={{
+              opacity: 0,
+              scale: 0.7,
+              transition: { duration: 0.14, ease: [0.4, 0, 0.2, 1] },
+            }}
             transition={{
-              type: "spring",
-              stiffness: 260,
-              damping: 22,
-              mass: 0.8,
-              delay: i * 0.035,
+              ...SATELLITE_SPRING,
+              delay: i * 0.022,
             }}
             className="absolute rounded-full flex items-center justify-center"
             style={{
@@ -543,6 +568,7 @@ function OpSatellites({
                 : isTargetPreview
                   ? "0 0 0 2px rgba(232,217,160,0.3), 0 6px 18px rgba(232,217,160,0.3)"
                   : "0 6px 18px rgba(0,0,0,0.45)",
+              transition: `background 200ms ${EASE_CSS}, box-shadow 200ms ${EASE_CSS}, border-color 200ms ${EASE_CSS}, color 200ms ${EASE_CSS}`,
             }}
           >
             <span
