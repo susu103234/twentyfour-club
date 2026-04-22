@@ -7,7 +7,20 @@ streak), **Daily** (one deterministic puzzle per local day).
 
 Tauri 2 · React 18 · TypeScript · Vite · Tailwind · Motion · Zustand.
 
-## Run
+## Install (prebuilt)
+
+Grab the latest `.dmg` (macOS) or `.msi` (Windows) from
+[Releases](https://github.com/susu103234/twentyfour-club/releases).
+Builds are unsigned:
+
+- **macOS**: after installing, run `xattr -cr /Applications/24club.app`
+  so Gatekeeper lets it open.
+- **Windows**: SmartScreen may warn — click "More info" → "Run anyway".
+
+Releases are cut by pushing a `v*` tag; see the workflow at
+[.github/workflows/release.yml](.github/workflows/release.yml).
+
+## Run from source
 
 ```bash
 # Web-only dev (fastest, no Rust needed)

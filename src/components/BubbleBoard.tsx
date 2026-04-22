@@ -1,4 +1,5 @@
 import {
+  animate,
   AnimatePresence,
   motion,
   useMotionValue,
@@ -152,6 +153,8 @@ interface MergeCtx {
   targetId: string;
   targetSlot: Slot;
   draggedSlot: Slot;
+  draggedValue: number;
+  targetValue: number;
 }
 
 function slotsFor(
@@ -275,13 +278,17 @@ export function BubbleBoard({
       // merge so both paths look consistent.
       const aSlot = slotMap.get(winner.aId);
       const bSlot = slotMap.get(winner.bId);
-      if (aSlot && bSlot) {
+      const aNode = pool.find((n) => n.id === winner.aId);
+      const bNode = pool.find((n) => n.id === winner.bId);
+      if (aSlot && bSlot && aNode && bNode) {
         flushSync(() => {
           setMergeCtx({
             draggedId: winner.aId,
             targetId: winner.bId,
             draggedSlot: aSlot,
             targetSlot: bSlot,
+            draggedValue: aNode.value,
+            targetValue: bNode.value,
           });
         });
       }
@@ -360,6 +367,8 @@ export function BubbleBoard({
               targetId: b.id,
               draggedSlot,
               targetSlot,
+              draggedValue: a.value,
+              targetValue: b.value,
             });
           });
         }
@@ -371,6 +380,14 @@ export function BubbleBoard({
 
   const primed =
     pool.length === 2 && !drag && !!findWinningOp(pool[0], pool[1]);
+
+  // Winning state: a single card left whose value is 24. Drives the gold
+  // glow on the card and the one-shot WinBurst effect next to it.
+  const winner =
+    pool.length === 1 && Math.abs(pool[0].value - TARGET) < EPS
+      ? pool[0]
+      : null;
+  const winnerSlot = winner ? slotMap.get(winner.id) : null;
 
   const draggedNode = drag ? pool.find((n) => n.id === drag.id) : null;
   const targetNode = drag?.targetId
@@ -398,6 +415,7 @@ export function BubbleBoard({
             const isHoverTarget = drag?.targetId === node.id;
             const isMergeResult =
               mergeCtx !== null && !prevPoolIds.has(node.id);
+            const isWinner = winner?.id === node.id;
             return (
               <DragCard
                 key={node.id}
@@ -410,6 +428,7 @@ export function BubbleBoard({
                 primed={primed}
                 mergeCtx={mergeCtx}
                 isMergeResult={isMergeResult}
+                isWinner={isWinner}
                 reducedMotion={reducedMotion}
                 onDragStart={() =>
                   setDrag({
@@ -439,6 +458,19 @@ export function BubbleBoard({
             reducedMotion={reducedMotion}
           />
         )}
+
+        <AnimatePresence>
+          {winner && winnerSlot && (
+            <WinBurst
+              key={winner.id}
+              center={{
+                x: winnerSlot.x + cfg.cardW / 2,
+                y: winnerSlot.y + cfg.cardH / 2,
+              }}
+              reducedMotion={reducedMotion}
+            />
+          )}
+        </AnimatePresence>
       </div>
 
       {!hideStatus && cfg.statusHeight > 0 && (
@@ -495,6 +527,7 @@ interface DragCardProps {
   primed: boolean;
   mergeCtx: MergeCtx | null;
   isMergeResult: boolean;
+  isWinner: boolean;
   reducedMotion: boolean;
   onDragStart: () => void;
   onDrag: (info: PanInfo) => void;
@@ -511,6 +544,7 @@ function DragCard({
   primed,
   mergeCtx,
   isMergeResult,
+  isWinner,
   reducedMotion,
   onDragStart,
   onDrag,
@@ -518,6 +552,40 @@ function DragCard({
 }: DragCardProps) {
   const isLeaf = node.children === undefined;
   const fadeForSatellites = isDragged && satellitesOpen;
+
+  // Number morph: for a fresh merge result, show the value counting from
+  // one of the source values to the final. Pick whichever source is
+  // numerically closer so the morph direction feels continuous rather than
+  // a jarring swing.
+  const [displayValue, setDisplayValue] = useState(() => {
+    if (isMergeResult && mergeCtx) {
+      const { draggedValue, targetValue } = mergeCtx;
+      return Math.abs(draggedValue - node.value) <
+        Math.abs(targetValue - node.value)
+        ? draggedValue
+        : targetValue;
+    }
+    return node.value;
+  });
+  useEffect(() => {
+    if (!isMergeResult || !mergeCtx) return;
+    const { draggedValue, targetValue } = mergeCtx;
+    const start =
+      Math.abs(draggedValue - node.value) <
+      Math.abs(targetValue - node.value)
+        ? draggedValue
+        : targetValue;
+    if (Math.abs(start - node.value) < EPS) return;
+    setDisplayValue(start);
+    const controls = animate(start, node.value, {
+      duration: reducedMotion ? 0.16 : 0.42,
+      ease: [0.2, 0.8, 0.2, 1],
+      onUpdate: (v) => setDisplayValue(v),
+    });
+    return () => controls.stop();
+    // Mount-once morph: node identity is stable for the DragCard's life.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Shared motion values for drag offset. Binding these to motion.div via
   // `style.x/y` (below) lets framer drive them during drag *and* lets us
@@ -643,20 +711,42 @@ function DragCard({
         // back to rest as x/y snap home on release.
         boxShadow: isDragged
           ? liftedBoxShadow
-          : isHoverTarget
-            ? "0 10px 24px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.1) inset, 0 -1px 0 rgba(0,0,0,0.45) inset, 0 0 0 2px rgba(232,217,160,0.65), 0 0 22px rgba(232,217,160,0.28)"
-            : primed
-              ? "0 10px 24px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.09) inset, 0 -1px 0 rgba(0,0,0,0.45) inset, 0 0 0 1px rgba(232,217,160,0.45)"
-              : undefined,
+          : isWinner
+            ? "0 14px 32px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.14) inset, 0 -1px 0 rgba(0,0,0,0.45) inset, 0 0 0 2px rgba(232,217,160,0.85), 0 0 36px rgba(232,217,160,0.55)"
+            : isHoverTarget
+              ? "0 10px 24px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.1) inset, 0 -1px 0 rgba(0,0,0,0.45) inset, 0 0 0 2px rgba(232,217,160,0.65), 0 0 22px rgba(232,217,160,0.28)"
+              : primed
+                ? "0 10px 24px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.09) inset, 0 -1px 0 rgba(0,0,0,0.45) inset, 0 0 0 1px rgba(232,217,160,0.45)"
+                : undefined,
       }}
       data-no-drag
     >
-      <span
-        className="text-ink-50 font-light leading-none tabular-nums"
+      <motion.span
+        className="font-light leading-none tabular-nums"
+        animate={{
+          color: isWinner ? "rgb(244,228,164)" : "rgb(245,245,250)",
+          textShadow: isWinner
+            ? "0 0 18px rgba(232,217,160,0.75), 0 0 4px rgba(232,217,160,0.6)"
+            : "0 0 0 rgba(232,217,160,0)",
+          scale: isWinner ? [1, 1.18, 1.06] : 1,
+        }}
+        transition={
+          isWinner
+            ? {
+                color: { duration: 0.28 },
+                textShadow: { duration: 0.32 },
+                scale: {
+                  duration: 0.9,
+                  times: [0, 0.35, 1],
+                  ease: [0.2, 0.8, 0.2, 1],
+                },
+              }
+            : { duration: 0.2 }
+        }
         style={{ pointerEvents: "none", fontSize: cfg.valueText }}
       >
-        {formatNumber(node.value)}
-      </span>
+        {formatNumber(displayValue)}
+      </motion.span>
       {cfg.showMeta && !isLeaf && (
         <span
           className="font-mono text-ink-300 mt-0.5 px-1 text-center leading-[1.15]"
@@ -802,6 +892,86 @@ interface Winner {
   aId: string;
   bId: string;
   op: ReduceOp;
+}
+
+/* ---------------------------- WinBurst ---------------------------------- */
+
+/**
+ * One-shot celebration overlay rendered at the winning card's centre.
+ * Two expanding gold rings + a ring of gold particles. Auto-fades on its
+ * own; unmounts cleanly if the user undoes the winning move.
+ */
+function WinBurst({
+  center,
+  reducedMotion,
+}: {
+  center: Slot;
+  reducedMotion: boolean;
+}) {
+  if (reducedMotion) return null;
+
+  const RING_COUNT = 2;
+  const PARTICLE_COUNT = 8;
+  const PARTICLE_DIST = 58;
+
+  return (
+    <div
+      className="absolute pointer-events-none"
+      style={{ left: center.x, top: center.y, zIndex: 25 }}
+    >
+      {Array.from({ length: RING_COUNT }, (_, i) => (
+        <motion.div
+          key={`ring-${i}`}
+          initial={{ scale: 0.7, opacity: 0.55 }}
+          animate={{ scale: 3.2 + i * 0.2, opacity: 0 }}
+          transition={{
+            duration: 1.0 + i * 0.15,
+            ease: [0.2, 0.8, 0.2, 1],
+            delay: i * 0.22,
+          }}
+          style={{
+            position: "absolute",
+            left: -22,
+            top: -22,
+            width: 44,
+            height: 44,
+            borderRadius: "9999px",
+            border: "1.5px solid rgba(232,217,160,0.75)",
+            boxShadow: "0 0 18px rgba(232,217,160,0.35)",
+          }}
+        />
+      ))}
+      {Array.from({ length: PARTICLE_COUNT }, (_, i) => {
+        // Start pointing up, go clockwise — evenly distributed.
+        const angle = (i / PARTICLE_COUNT) * Math.PI * 2 - Math.PI / 2;
+        const dx = Math.cos(angle) * PARTICLE_DIST;
+        const dy = Math.sin(angle) * PARTICLE_DIST;
+        return (
+          <motion.div
+            key={`p-${i}`}
+            initial={{ x: 0, y: 0, opacity: 1, scale: 1 }}
+            animate={{ x: dx, y: dy, opacity: 0, scale: 0.35 }}
+            transition={{
+              duration: 0.9,
+              ease: [0.2, 0.8, 0.2, 1],
+              delay: 0.04 * i,
+            }}
+            style={{
+              position: "absolute",
+              left: -3.5,
+              top: -3.5,
+              width: 7,
+              height: 7,
+              borderRadius: "9999px",
+              background:
+                "radial-gradient(circle at 30% 30%, rgba(255,245,210,1) 0%, rgba(232,217,160,0.45) 60%, transparent 100%)",
+              boxShadow: "0 0 10px rgba(232,217,160,0.7)",
+            }}
+          />
+        );
+      })}
+    </div>
+  );
 }
 
 function findWinningOp(a: ReduceNode, b: ReduceNode): Winner | null {
