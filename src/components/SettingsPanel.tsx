@@ -16,6 +16,8 @@ export function SettingsPanel() {
   const setInputMode = useGame((s) => s.setInputMode);
   const bubbleDrag = useGame((s) => s.preferences.bubbleDrag);
   const toggleBubbleDrag = useGame((s) => s.toggleBubbleDrag);
+  const adaptive = useGame((s) => s.preferences.adaptive);
+  const toggleAdaptive = useGame((s) => s.toggleAdaptive);
   const hand = useGame((s) => s.hand);
   const loadCustomHand = useGame((s) => s.loadCustomHand);
 
@@ -107,8 +109,19 @@ export function SettingsPanel() {
                   </button>
                 ))}
               </div>
+              <label className="flex items-center gap-2 text-sm text-ink-100 mt-2">
+                <input
+                  type="checkbox"
+                  checked={adaptive}
+                  onChange={toggleAdaptive}
+                  className="accent-accent-500"
+                />
+                Adaptive
+              </label>
               <p className="text-[11px] text-ink-400 mt-1">
-                Adaptive selection still runs; this is your baseline.
+                {adaptive
+                  ? "Hot streaks push the next hand harder; cold streaks soften it."
+                  : "Every hand uses the difficulty above — no auto-adjust."}
               </p>
             </Section>
 

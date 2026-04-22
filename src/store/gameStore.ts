@@ -100,6 +100,7 @@ interface GameState {
   setDifficulty: (d: Difficulty) => void;
   setInputMode: (m: InputMode) => void;
   toggleBubbleDrag: () => void;
+  toggleAdaptive: () => void;
   toggleAlwaysOnTop: () => void;
   startRush: () => void;
   stopRush: () => void;
@@ -139,6 +140,7 @@ const defaultPreferences: Preferences = {
   sound: false,
   inputMode: "reduce",
   bubbleDrag: true,
+  adaptive: false,
 };
 
 /**
@@ -229,8 +231,10 @@ export const useGame = create<GameState>()(
 
       startNewHand: () => {
         const { stats, preferences } = get();
-        const adaptive = pickAdaptiveDifficulty(preferences.difficulty, stats);
-        const hand = generateHand(adaptive);
+        const target = preferences.adaptive
+          ? pickAdaptiveDifficulty(preferences.difficulty, stats)
+          : preferences.difficulty;
+        const hand = generateHand(target);
         set({
           hand,
           input: "",
@@ -533,6 +537,11 @@ export const useGame = create<GameState>()(
         });
       },
 
+      toggleAdaptive: () => {
+        const prefs = get().preferences;
+        set({ preferences: { ...prefs, adaptive: !prefs.adaptive } });
+      },
+
       toggleAlwaysOnTop: () => {
         const prefs = get().preferences;
         const next = !prefs.alwaysOnTop;
@@ -666,7 +675,7 @@ export const useGame = create<GameState>()(
     {
       name: "24club/state",
       storage: createJSONStorage(() => localStorage),
-      version: 3,
+      version: 4,
       migrate: (persisted, version) => {
         const state = (persisted ?? {}) as { preferences?: Preferences };
         // v1 → v2: force alwaysOnTop=true so the floating window floats.
@@ -676,6 +685,10 @@ export const useGame = create<GameState>()(
         // v2 → v3: default the new bubble-drag board on.
         if (version < 3 && state.preferences) {
           state.preferences = { ...state.preferences, bubbleDrag: true };
+        }
+        // v3 → v4: default adaptive off — the override was too surprising.
+        if (version < 4 && state.preferences) {
+          state.preferences = { ...state.preferences, adaptive: false };
         }
         return state;
       },

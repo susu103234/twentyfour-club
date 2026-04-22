@@ -51,6 +51,12 @@ export interface Preferences {
   inputMode: InputMode;
   /** Use drag-bubble reduce board instead of the tap-based one. */
   bubbleDrag: boolean;
+  /**
+   * When true, the current streak and solve rate can nudge the actual hand
+   * difficulty up or down from `difficulty`. When false, `difficulty` is
+   * honoured verbatim on every hand.
+   */
+  adaptive: boolean;
 }
 
 export interface Achievement {
