@@ -30,7 +30,7 @@ import {
 } from "@/features/game/reduce";
 import { pick, todayKey, uid } from "@/lib/random";
 import { TARGET, EPS } from "@/lib/constants";
-import { solve24, shortest } from "@/features/solver/solver";
+import { solve24Detailed } from "@/features/solver/solver";
 import { classifyDifficulty } from "@/features/generator/difficulty";
 
 const PRAISE = ["Nice", "Clean solve", "Sharp", "Brilliant", "Crisp", "Elegant"] as const;
@@ -260,20 +260,25 @@ export const useGame = create<GameState>()(
       },
 
       loadCustomHand: (cards) => {
-        const solutions = solve24([...cards]);
-        if (solutions.length === 0) return false;
-        const dedup = [...new Set(solutions)].sort(
-          (a, b) => a.length - b.length
+        const detailed = solve24Detailed([...cards]);
+        if (detailed.length === 0) return false;
+        const difficulty = classifyDifficulty(detailed);
+        const uniq = new Map<string, typeof detailed[number]>();
+        for (const s of detailed) if (!uniq.has(s.expr)) uniq.set(s.expr, s);
+        const all = [...uniq.values()].sort(
+          (a, b) => a.expr.length - b.expr.length
         );
-        const canonical = shortest(dedup);
+        const preferIntOnly = difficulty !== "hard";
+        const canonical =
+          (preferIntOnly && all.find((s) => s.allInt)) || all[0];
         const ordered = [
-          canonical,
-          ...dedup.filter((s) => s !== canonical),
+          canonical.expr,
+          ...all.filter((s) => s.expr !== canonical.expr).map((s) => s.expr),
         ].slice(0, 6);
         const hand: Hand = {
           cards,
           solutions: ordered,
-          difficulty: classifyDifficulty(ordered),
+          difficulty,
           id: uid(),
         };
         set({

@@ -1,6 +1,9 @@
 import { HAND_SIZE } from "@/lib/constants";
 import { pick, randInt, setSeed, shuffled, uid } from "@/lib/random";
-import { shortest, solve24 } from "@/features/solver/solver";
+import {
+  solve24Detailed,
+  type DetailedSolution,
+} from "@/features/solver/solver";
 import type { Difficulty, Hand, HandCards, SessionStats } from "@/types";
 import { classifyDifficulty } from "./difficulty";
 
@@ -14,7 +17,7 @@ const MAX_ATTEMPTS = 400;
 export function generateHand(difficulty: Difficulty): Hand {
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const cards = drawCards();
-    const solutions = solve24([...cards]);
+    const solutions = solve24Detailed([...cards]);
     if (solutions.length === 0) continue;
     const actual = classifyDifficulty(solutions);
     if (actual === difficulty) {
@@ -23,7 +26,7 @@ export function generateHand(difficulty: Difficulty): Hand {
   }
   while (true) {
     const cards = drawCards();
-    const solutions = solve24([...cards]);
+    const solutions = solve24Detailed([...cards]);
     if (solutions.length > 0) {
       return makeHand(cards, solutions, classifyDifficulty(solutions));
     }
@@ -39,7 +42,7 @@ export function generateHandForSeed(seed: string): Hand {
   setSeed(seed);
   try {
     const cards = drawCards();
-    const solutions = solve24([...cards]);
+    const solutions = solve24Detailed([...cards]);
     if (solutions.length > 0) {
       return makeHand(cards, solutions, classifyDifficulty(solutions));
     }
@@ -47,7 +50,7 @@ export function generateHandForSeed(seed: string): Hand {
     for (let i = 1; i < 20; i++) {
       setSeed(`${seed}#${i}`);
       const cs = drawCards();
-      const s = solve24([...cs]);
+      const s = solve24Detailed([...cs]);
       if (s.length > 0) {
         return makeHand(cs, s, classifyDifficulty(s));
       }
@@ -69,15 +72,30 @@ function drawCards(): HandCards {
 
 function makeHand(
   cards: HandCards,
-  solutions: string[],
+  solutions: DetailedSolution[],
   difficulty: Difficulty
 ): Hand {
-  const sorted = [...new Set(solutions)].sort((a, b) => a.length - b.length);
-  const canonical = shortest(sorted);
-  const ordered = [canonical, ...sorted.filter((s) => s !== canonical)].slice(
-    0,
-    6
+  // Dedupe by canonical expression string and sort shortest-first for a stable
+  // primary order.
+  const uniq = new Map<string, DetailedSolution>();
+  for (const s of solutions) {
+    if (!uniq.has(s.expr)) uniq.set(s.expr, s);
+  }
+  const all = [...uniq.values()].sort(
+    (a, b) => a.expr.length - b.expr.length
   );
+
+  // On easy/normal hands, surface an integer-only path as the canonical
+  // solution so hints and reveals never mention a fraction.
+  const preferIntOnly = difficulty !== "hard";
+  const canonical =
+    (preferIntOnly && all.find((s) => s.allInt)) || all[0];
+
+  const ordered = [
+    canonical.expr,
+    ...all.filter((s) => s.expr !== canonical.expr).map((s) => s.expr),
+  ].slice(0, 6);
+
   return {
     cards,
     solutions: ordered,

@@ -1,24 +1,20 @@
 import type { Difficulty } from "@/types";
+import type { DetailedSolution } from "@/features/solver/solver";
 
 /**
- * Classify a hand's difficulty from the set of its solutions.
+ * Classify a hand's difficulty from its (detailed) solution set.
  *
- * - Easy: at least one pure + - × solution (no division).
- * - Normal: every solution uses division or has to nest ≥ 2 levels.
- * - Hard: every solution involves a fractional intermediate
- *   (i.e. contains a '÷' where the right operand is a grouped expression).
+ * - Easy: at least one pure + − × solution (no division — trivially integer).
+ * - Normal: no pure solution, but at least one solution whose every
+ *   intermediate value stays an integer (division must divide evenly).
+ * - Hard: every solution passes through a fractional intermediate.
  */
-export function classifyDifficulty(solutions: string[]): Difficulty {
+export function classifyDifficulty(
+  solutions: DetailedSolution[]
+): Difficulty {
   if (solutions.length === 0) return "hard";
-  const hasPure = solutions.some((s) => !/[÷\/]/.test(s));
+  const hasPure = solutions.some((s) => !/[÷\/]/.test(s.expr));
   if (hasPure) return "easy";
-  const everyFractional = solutions.every(fractionalSolution);
-  return everyFractional ? "hard" : "normal";
-}
-
-function fractionalSolution(expr: string): boolean {
-  // Treat as "fractional" if there's a division whose right-hand side
-  // is a parenthesised sub-expression — classic 24-game hard shapes
-  // like 6 ÷ (1 - 3/4) or 3 ÷ (1 - 5/8).
-  return /[÷\/]\s*\(/.test(expr);
+  const hasIntegerOnly = solutions.some((s) => s.allInt);
+  return hasIntegerOnly ? "normal" : "hard";
 }
