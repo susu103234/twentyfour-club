@@ -38,6 +38,8 @@ interface BubbleConfig {
   containerH: number;
   statusHeight: number;
   hGap: boolean;
+  /** Show `#N` badges + expression subtitle on cards. Off in compact. */
+  showMeta: boolean;
 }
 
 const ROW_CFG: BubbleConfig = {
@@ -53,21 +55,23 @@ const ROW_CFG: BubbleConfig = {
   containerH: 118,
   statusHeight: 14,
   hGap: true,
+  showMeta: true,
 };
 
 const COMPACT_CFG: BubbleConfig = {
-  cardW: 60,
-  cardH: 70,
-  gap: 10,
-  opDist: 38,
-  opRadius: 18,
-  opSize: 30,
-  valueText: "19px",
-  exprText: "7.5px",
-  indexText: "7px",
-  containerH: 160,
+  cardW: 50,
+  cardH: 58,
+  gap: 8,
+  opDist: 36,
+  opRadius: 23,
+  opSize: 46,
+  valueText: "18px",
+  exprText: "7px",
+  indexText: "0px",
+  containerH: 150,
   statusHeight: 0,
   hGap: false,
+  showMeta: false,
 };
 
 function opLayout(cfg: BubbleConfig): { op: ReduceOp; dx: number; dy: number }[] {
@@ -408,9 +412,9 @@ function DragCard({
       exit={{ opacity: 0, scale: 0.4 }}
       transition={{
         type: "spring",
-        stiffness: 380,
-        damping: 28,
-        mass: 0.7,
+        stiffness: 260,
+        damping: 24,
+        mass: 0.8,
       }}
       whileTap={{ scale: 1.02 }}
       className="absolute card-face flex-col gap-0.5"
@@ -440,7 +444,7 @@ function DragCard({
       >
         {formatNumber(node.value)}
       </span>
-      {!isLeaf && (
+      {cfg.showMeta && !isLeaf && (
         <span
           className="font-mono text-ink-300 mt-0.5 px-1 text-center leading-[1.15]"
           style={{
@@ -455,7 +459,7 @@ function DragCard({
           {node.expr}
         </span>
       )}
-      {isLeaf && node.cardIndex !== undefined && (
+      {cfg.showMeta && isLeaf && node.cardIndex !== undefined && (
         <span
           className="absolute bottom-1 left-1.5 uppercase tracking-[0.15em] text-ink-400/70"
           style={{ pointerEvents: "none", fontSize: cfg.indexText }}
@@ -491,29 +495,30 @@ function OpSatellites({
     >
       {layout.map(({ op, dx, dy }, i) => {
         const ok = isOpLegal(a, b, op);
-        const val = ok ? formatNumber(combine(a, b, op).node.value) : null;
-        const isTargetPreview =
-          val !== null && Math.abs(Number(val) - TARGET) < EPS;
+        const val = ok ? combine(a, b, op).node.value : null;
+        const isTargetPreview = val !== null && Math.abs(val - TARGET) < EPS;
         const active = activeOp === op;
         const size = cfg.opSize;
+        const glyphSize = Math.round(size * 0.48);
         return (
           <motion.div
             key={op}
-            initial={{ opacity: 0, scale: 0.4, x: -size / 2, y: -size / 2 }}
+            initial={{ opacity: 0, scale: 0.3, x: -size / 2, y: -size / 2 }}
             animate={{
-              opacity: ok ? 1 : 0.4,
-              scale: active ? 1.18 : 1,
+              opacity: ok ? 1 : 0.35,
+              scale: active ? 1.14 : 1,
               x: dx - size / 2,
               y: dy - size / 2,
             }}
-            exit={{ opacity: 0, scale: 0.4 }}
+            exit={{ opacity: 0, scale: 0.3, transition: { duration: 0.12 } }}
             transition={{
               type: "spring",
-              stiffness: 420,
-              damping: 24,
-              delay: i * 0.025,
+              stiffness: 260,
+              damping: 22,
+              mass: 0.8,
+              delay: i * 0.035,
             }}
-            className="absolute rounded-full flex flex-col items-center justify-center"
+            className="absolute rounded-full flex items-center justify-center"
             style={{
               width: size,
               height: size,
@@ -529,26 +534,18 @@ function OpSatellites({
                   ? "1px solid rgba(232,217,160,0.95)"
                   : "1px solid rgba(255,255,255,0.14)",
               boxShadow: active
-                ? "0 0 0 3px rgba(232,217,160,0.35), 0 8px 22px rgba(232,217,160,0.5)"
+                ? "0 0 0 3px rgba(232,217,160,0.35), 0 10px 26px rgba(232,217,160,0.5)"
                 : isTargetPreview
-                  ? "0 0 0 2px rgba(232,217,160,0.3), 0 4px 14px rgba(232,217,160,0.3)"
-                  : "0 4px 14px rgba(0,0,0,0.45)",
+                  ? "0 0 0 2px rgba(232,217,160,0.3), 0 6px 18px rgba(232,217,160,0.3)"
+                  : "0 6px 18px rgba(0,0,0,0.45)",
             }}
           >
             <span
               className="leading-none font-light"
-              style={{ fontSize: size >= 32 ? 15 : 13 }}
+              style={{ fontSize: glyphSize }}
             >
               {op === "-" ? "−" : op}
             </span>
-            {val !== null && (
-              <span
-                className="font-mono leading-none mt-[1px] tabular-nums"
-                style={{ opacity: 0.85, fontSize: size >= 32 ? 7.5 : 6.5 }}
-              >
-                {val}
-              </span>
-            )}
           </motion.div>
         );
       })}

@@ -8,22 +8,19 @@ import { BubbleBoard } from "./BubbleBoard";
 import { OnboardingBubble } from "./OnboardingBubble";
 
 /**
- * Compact 240×260 panel.
+ * Minimal 180×220 panel.
  *
- *   [ score/time     ? ⚙ ↶ ↻ ⛶ ]  ← 28px icon bar, tauri-drag region
- *   [                           ]
- *   [     card      card        ]
- *   [                           ]  ← BubbleBoard compact (drag mode)
- *   [     card      card        ]     or static 2×2 tap-to-expand.
- *   [                           ]
+ *   [ · ? ⚙ ↶ ↻ ⛶ ]  ← tight icon bar (timer if rush, else plain)
+ *   [               ]
+ *   [  card   card  ]  ← BubbleBoard compact (drag mode)
+ *   [  card   card  ]     or static 2×2 tap-to-expand fallback.
  *
- * The strip layout was replaced with a 2×2 card grid — easier aim target
- * for touch/drag than a 28-px-tall row.
+ * Stripped to the essentials: no score, no status text, no padding we
+ * don't need. The window should feel like a tiny HUD, not a dialog.
  */
 export function CollapsedView() {
   const hand = useGame((s) => s.hand);
   const startNewHand = useGame((s) => s.startNewHand);
-  const score = useGame((s) => s.score);
   const mode = useGame((s) => s.mode);
   const rushActive = useGame((s) => s.rushActive);
   const rushMs = useGame((s) => s.rushTimeMs);
@@ -48,26 +45,34 @@ export function CollapsedView() {
       onDoubleClick={() => setCollapsed(false)}
       className="relative flex flex-col flex-1 min-w-0 min-h-0"
     >
-      {/* Top bar: score on the left, tool icons on the right. */}
+      {/* Top strip: rush timer (when active) on the left, tight icon
+          cluster on the right. In chill mode the left is blank — the
+          score lives in the expanded window. */}
       <div
-        className="flex items-center justify-between px-2.5 pt-1.5 pb-0.5 shrink-0"
+        className="flex items-center justify-between px-2 pt-1 pb-0 shrink-0"
         data-no-drag
       >
-        <div className="flex items-center gap-1 pl-0.5">
-          {mode === "rush" && rushActive ? (
-            <span className="font-mono tabular-nums text-[13px] text-accent-300">
+        <div className="flex items-center min-w-0">
+          {mode === "rush" && rushActive && (
+            <span className="font-mono tabular-nums text-[11px] text-accent-300">
               {formatTime(rushMs)}
-            </span>
-          ) : (
-            <span className="font-mono tabular-nums text-[13px] text-ink-100">
-              {score}
             </span>
           )}
         </div>
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center">
           <SubtleIcon title="Hint" onClick={requestHint}>
             <HintGlyph level={hintLevel} />
           </SubtleIcon>
+          {isReduce && historyLen > 0 && (
+            <SubtleIcon title="Undo" onClick={undo}>
+              <UndoGlyph />
+            </SubtleIcon>
+          )}
+          {isReduce && historyLen > 0 && (
+            <SubtleIcon title="Reset" onClick={resetPool}>
+              <ResetGlyph />
+            </SubtleIcon>
+          )}
           <SubtleIcon
             title="Settings"
             onClick={() => {
@@ -77,27 +82,14 @@ export function CollapsedView() {
           >
             <GearGlyph />
           </SubtleIcon>
-          {isReduce && historyLen > 0 && (
-            <>
-              <SubtleIcon title="Undo" onClick={undo}>
-                <UndoGlyph />
-              </SubtleIcon>
-              <SubtleIcon title="Reset" onClick={resetPool}>
-                <ResetGlyph />
-              </SubtleIcon>
-            </>
-          )}
           <SubtleIcon title="Expand" onClick={() => setCollapsed(false)}>
             <ExpandGlyph />
           </SubtleIcon>
         </div>
       </div>
 
-      {/* Content area: bubble board when drag-mode, else a tap-to-expand
-          2×2 of static cards. Both paths sit in the same box so the
-          window size is stable. */}
       <div
-        className="flex-1 min-h-0 px-2 pb-2 flex items-center justify-center"
+        className="flex-1 min-h-0 px-1 pb-1 flex items-center justify-center"
         data-no-drag
       >
         {dragMode ? (
@@ -124,7 +116,7 @@ function StaticCardGrid({ onExpand }: { onExpand: () => void }) {
   const hand = useGame((s) => s.hand);
   if (!hand) return null;
   return (
-    <div className="grid grid-cols-2 gap-2 w-[134px]">
+    <div className="grid grid-cols-2 gap-2">
       {hand.cards.map((c, i) => (
         <motion.button
           key={`${hand.id}-${i}`}
@@ -135,13 +127,13 @@ function StaticCardGrid({ onExpand }: { onExpand: () => void }) {
           transition={{
             delay: i * 0.04,
             type: "spring",
-            stiffness: 320,
+            stiffness: 260,
             damping: 24,
           }}
           className="card-face"
-          style={{ width: 60, height: 70 }}
+          style={{ width: 50, height: 58 }}
         >
-          <span className="text-[19px] text-ink-50 font-light leading-none tabular-nums">
+          <span className="text-[18px] text-ink-50 font-light leading-none tabular-nums">
             {formatNumber(c)}
           </span>
         </motion.button>
