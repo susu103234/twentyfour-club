@@ -147,6 +147,14 @@ interface DragState {
   /** Pointer in container coords — used for op-satellite hit tests. */
   px: number;
   py: number;
+  /**
+   * Grab offset: (pointer - card centre) captured at drag-start. Lets the
+   * water-fusion layer anchor the "dragged" blob on the card's actual
+   * centre (pointer − grabOffset) instead of on the pointer itself, so
+   * the blob tracks the card body no matter where the user grabbed it.
+   */
+  grabOffsetX: number;
+  grabOffsetY: number;
   targetId: string | null;
   op: ReduceOp | null;
 }
@@ -353,7 +361,15 @@ export function BubbleBoard({
       }
     }
 
-    setDrag({ id, px, py, targetId, op });
+    setDrag({
+      id,
+      px,
+      py,
+      grabOffsetX: drag?.grabOffsetX ?? 0,
+      grabOffsetY: drag?.grabOffsetY ?? 0,
+      targetId,
+      op,
+    });
   };
 
   const handleDragEnd = () => {
@@ -428,44 +444,66 @@ export function BubbleBoard({
           (() => {
             const targetSlot = slotMap.get(drag.targetId);
             if (!targetSlot) return null;
-            const blobSize = Math.round(cfg.cardH * 1.2);
+            const blobSize = Math.round(cfg.cardH * 1.15);
             const targetCx = targetSlot.x + cfg.cardW / 2;
             const targetCy = targetSlot.y + cfg.cardH / 2;
+            // Recover the dragged card's actual centre — the pointer minus
+            // the grab offset captured at drag-start. Without this the
+            // blob would anchor on the pointer (potentially near the card
+            // edge) instead of the card body.
+            const draggedCx = drag.px - drag.grabOffsetX;
+            const draggedCy = drag.py - drag.grabOffsetY;
+            // Surface-tension pull: as the dragged card approaches the
+            // target, the target blob drifts a little toward the dragged
+            // one. Reads like two droplets reaching for each other.
+            const centerDist = Math.hypot(
+              draggedCx - targetCx,
+              draggedCy - targetCy
+            );
+            const proximity = Math.max(
+              0,
+              1 - centerDist / (blobSize * 1.3)
+            );
+            const pullX = (draggedCx - targetCx) * 0.18 * proximity;
+            const pullY = (draggedCy - targetCy) * 0.18 * proximity;
             return (
               <div
                 className="absolute inset-0 pointer-events-none"
-                style={{ filter: "url(#card-fusion)", zIndex: 2 }}
+                // zIndex 0 keeps the fusion layer beneath every card;
+                // the water aura only peeks past the card edges.
+                style={{ filter: "url(#card-fusion)", zIndex: 0 }}
               >
-                {/* Dragged-card blob — follows the pointer. */}
+                {/* Dragged-card blob — follows the real card centre. */}
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  transition={{ duration: 0.14 }}
+                  transition={{ duration: 0.16, ease: [0.4, 0, 0.2, 1] }}
                   style={{
                     position: "absolute",
-                    left: drag.px - blobSize / 2,
-                    top: drag.py - blobSize / 2,
+                    left: draggedCx - blobSize / 2,
+                    top: draggedCy - blobSize / 2,
                     width: blobSize,
                     height: blobSize,
                     borderRadius: "9999px",
-                    background: "rgba(180,200,255,0.55)",
+                    background: "rgba(186,206,255,0.6)",
                   }}
                 />
-                {/* Target-card blob — pinned to the target's slot. */}
+                {/* Target-card blob — pulls toward the dragged blob on
+                    proximity to simulate surface tension. */}
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  transition={{ duration: 0.14 }}
+                  transition={{ duration: 0.16, ease: [0.4, 0, 0.2, 1] }}
                   style={{
                     position: "absolute",
-                    left: targetCx - blobSize / 2,
-                    top: targetCy - blobSize / 2,
+                    left: targetCx + pullX - blobSize / 2,
+                    top: targetCy + pullY - blobSize / 2,
                     width: blobSize,
                     height: blobSize,
                     borderRadius: "9999px",
-                    background: "rgba(180,200,255,0.55)",
+                    background: "rgba(186,206,255,0.6)",
                   }}
                 />
               </div>
@@ -495,15 +533,25 @@ export function BubbleBoard({
                 isMergeResult={isMergeResult}
                 isWinner={isWinner}
                 reducedMotion={reducedMotion}
-                onDragStart={() =>
+                onDragStart={(info) => {
+                  const p = relPointer(info.point.x, info.point.y);
+                  const px = p?.x ?? slot.x + cfg.cardW / 2;
+                  const py = p?.y ?? slot.y + cfg.cardH / 2;
+                  // grab offset = pointer − card centre at the moment
+                  // the grab happens. Subtracted from the live pointer
+                  // later to recover the card's centre during drag.
+                  const grabOffsetX = px - (slot.x + cfg.cardW / 2);
+                  const grabOffsetY = py - (slot.y + cfg.cardH / 2);
                   setDrag({
                     id: node.id,
-                    px: slot.x + cfg.cardW / 2,
-                    py: slot.y + cfg.cardH / 2,
+                    px,
+                    py,
+                    grabOffsetX,
+                    grabOffsetY,
                     targetId: null,
                     op: null,
-                  })
-                }
+                  });
+                }}
                 onDrag={(info) => handleDrag(node.id, info)}
                 onDragEnd={handleDragEnd}
               />
@@ -594,7 +642,7 @@ interface DragCardProps {
   isMergeResult: boolean;
   isWinner: boolean;
   reducedMotion: boolean;
-  onDragStart: () => void;
+  onDragStart: (info: PanInfo) => void;
   onDrag: (info: PanInfo) => void;
   onDragEnd: () => void;
 }
@@ -754,13 +802,22 @@ function DragCard({
       dragMomentum={false}
       dragElastic={0}
       dragTransition={SNAP_BACK}
-      onDragStart={onDragStart}
+      onDragStart={(_, info) => onDragStart(info)}
       onDrag={(_, info) => onDrag(info)}
       onDragEnd={onDragEnd}
       initial={initial}
       animate={{
         opacity: 1,
-        scale: isDragged ? 1.035 : isHoverTarget ? 1.025 : 1,
+        // Hover-target gets a slow breathing scale (1.022 → 1.04 → 1.022)
+        // to say "chosen, and listening." A static scale felt binary;
+        // the breath gives the lock a heartbeat without being noisy.
+        scale: isDragged
+          ? 1.035
+          : isHoverTarget
+            ? reducedMotion
+              ? 1.025
+              : [1.022, 1.04, 1.022]
+            : 1,
         // NOTE: x/y intentionally omitted. They're fully owned by the
         // motion values bound into style — framer's drag writes to them
         // during a gesture and `dragSnapToOrigin` springs them back on
@@ -771,7 +828,14 @@ function DragCard({
       transition={
         reducedMotion
           ? { duration: 0.14, ease: [0.4, 0, 0.2, 1] }
-          : CARD_SPRING
+          : {
+              default: CARD_SPRING,
+              // Per-prop override: breathing scale runs on a loop, the
+              // rest uses the standard settle spring.
+              scale: isHoverTarget
+                ? { duration: 2.4, repeat: Infinity, ease: "easeInOut" }
+                : CARD_SPRING,
+            }
       }
       className="absolute card-face flex-col gap-0.5"
       style={{
@@ -891,11 +955,11 @@ function OpSatellites({
         const isTargetPreview = val !== null && Math.abs(val - TARGET) < EPS;
         const active = activeOp === op;
         const size = cfg.opSize;
-        const glyphSize = Math.round(size * 0.48);
 
-        // Satellites live inside a container positioned at `anchor`, so the
-        // pointer is still in container-coords and the satellite centre is
-        // (anchor + {dx,dy}).
+        // Magnet scale: the satellite gains a touch of size as the pointer
+        // approaches its centre (iOS Dock sensing). Pointer hit radius
+        // `MAGNET_RANGE` tuned wider than the lock radius so the effect
+        // is felt before activation.
         const sx = anchor.x + dx;
         const sy = anchor.y + dy;
         const dist = Math.hypot(pointer.x - sx, pointer.y - sy);
@@ -906,82 +970,158 @@ function OpSatellites({
         const targetScale = active ? 1.12 : magnetScale;
 
         return (
-          <motion.div
+          <OpSatellite
             key={op}
-            initial={{
-              opacity: 0,
-              scale: reducedMotion ? 0.92 : 0.82,
-              // Start 35 % of the way to their final slot — no messy
-              // stack at the card centre, just a short "already on the
-              // way" slide that lets the stagger breathe.
-              x: dx * 0.35 - size / 2,
-              y: dy * 0.35 - size / 2,
-            }}
-            animate={{
-              opacity: ok ? 1 : 0.35,
-              scale: targetScale,
-              x: dx - size / 2,
-              y: dy - size / 2,
-            }}
-            exit={{
-              opacity: 0,
-              // Pull back toward the card on exit so the dismissal
-              // reverses the emergence cleanly.
-              scale: reducedMotion ? 0.92 : 0.75,
-              x: dx * 0.35 - size / 2,
-              y: dy * 0.35 - size / 2,
-              transition: { duration: 0.18, ease: [0.4, 0, 0.2, 1] },
-            }}
-            transition={
-              reducedMotion
-                ? { duration: 0.14, ease: [0.4, 0, 0.2, 1] }
-                : { ...SATELLITE_SPRING, delay: i * 0.028 }
-            }
-            className="absolute rounded-full flex items-center justify-center"
-            style={{
-              width: size,
-              height: size,
-              // Three-state visual, stripped back to a glass language:
-              //  • default  — dark translucent glass, crisp white glyph
-              //  • preview  — same glass, gold border + soft halo (hint,
-              //               not fill) so the winning op doesn't shout
-              //  • active   — warm gold fill, dark glyph (earned, not
-              //               previewed)
-              background: active
-                ? "linear-gradient(180deg, rgba(255,245,210,0.97) 0%, rgba(220,190,100,0.92) 100%)"
-                : "linear-gradient(180deg, rgba(36,38,48,0.78) 0%, rgba(18,20,28,0.82) 100%)",
-              backdropFilter: active ? undefined : "blur(14px) saturate(130%)",
-              WebkitBackdropFilter: active
-                ? undefined
-                : "blur(14px) saturate(130%)",
-              color: active
-                ? "rgba(38,28,10,1)"
-                : isTargetPreview
-                  ? "rgba(244,228,164,0.98)"
-                  : "rgba(248,248,252,0.92)",
-              border: active
-                ? "1px solid rgba(232,217,160,0.95)"
-                : isTargetPreview
-                  ? "1px solid rgba(232,217,160,0.55)"
-                  : "1px solid rgba(255,255,255,0.14)",
-              boxShadow: active
-                ? "0 10px 26px rgba(232,217,160,0.55), 0 0 0 2px rgba(232,217,160,0.28), 0 1px 0 rgba(255,245,210,0.55) inset"
-                : isTargetPreview
-                  ? "0 6px 18px rgba(0,0,0,0.35), 0 0 22px rgba(232,217,160,0.22), 0 1px 0 rgba(255,255,255,0.1) inset, 0 -1px 0 rgba(0,0,0,0.3) inset"
-                  : "0 6px 18px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.08) inset, 0 -1px 0 rgba(0,0,0,0.3) inset",
-              transition: `background 220ms ${EASE_CSS}, box-shadow 220ms ${EASE_CSS}, border-color 220ms ${EASE_CSS}, color 220ms ${EASE_CSS}`,
-            }}
-          >
-            <span
-              className="leading-none font-light"
-              style={{ fontSize: glyphSize }}
-            >
-              {op === "-" ? "−" : op}
-            </span>
-          </motion.div>
+            op={op}
+            dx={dx}
+            dy={dy}
+            size={size}
+            ok={ok}
+            active={active}
+            isTargetPreview={isTargetPreview}
+            targetScale={targetScale}
+            indexForStagger={i}
+            reducedMotion={reducedMotion}
+          />
         );
       })}
     </div>
+  );
+}
+
+/* ----------------------------- OpSatellite -------------------------------- */
+
+function OpSatellite({
+  op,
+  dx,
+  dy,
+  size,
+  ok,
+  active,
+  isTargetPreview,
+  targetScale,
+  indexForStagger,
+  reducedMotion,
+}: {
+  op: ReduceOp;
+  dx: number;
+  dy: number;
+  size: number;
+  ok: boolean;
+  active: boolean;
+  isTargetPreview: boolean;
+  targetScale: number;
+  indexForStagger: number;
+  reducedMotion: boolean;
+}) {
+  const glyphSize = Math.round(size * 0.48);
+
+  // Activation ring pulse: one-shot ring that fires every time the
+  // satellite transitions from inactive → active. We key a nested ring
+  // element by a counter that bumps on each activation, so the
+  // AnimatePresence beneath sees a fresh mount and plays the ring out.
+  const [pulseKey, setPulseKey] = useState(0);
+  const prevActiveRef = useRef(false);
+  useEffect(() => {
+    if (active && !prevActiveRef.current) setPulseKey((k) => k + 1);
+    prevActiveRef.current = active;
+  }, [active]);
+
+  return (
+    <motion.div
+      initial={{
+        opacity: 0,
+        scale: reducedMotion ? 0.92 : 0.82,
+        // Start ~35 % of the way to the final slot — no messy stack
+        // at the card centre, just a short "already on the way" slide
+        // that lets the stagger breathe.
+        x: dx * 0.35 - size / 2,
+        y: dy * 0.35 - size / 2,
+      }}
+      animate={{
+        opacity: ok ? 1 : 0.35,
+        scale: targetScale,
+        x: dx - size / 2,
+        y: dy - size / 2,
+      }}
+      exit={{
+        opacity: 0,
+        // Pull back toward the card on exit so the dismissal reverses
+        // the emergence cleanly.
+        scale: reducedMotion ? 0.92 : 0.75,
+        x: dx * 0.35 - size / 2,
+        y: dy * 0.35 - size / 2,
+        transition: { duration: 0.18, ease: [0.4, 0, 0.2, 1] },
+      }}
+      transition={
+        reducedMotion
+          ? { duration: 0.14, ease: [0.4, 0, 0.2, 1] }
+          : { ...SATELLITE_SPRING, delay: indexForStagger * 0.028 }
+      }
+      className="absolute rounded-full flex items-center justify-center"
+      style={{
+        width: size,
+        height: size,
+        // Three-state visual, stripped back to a glass language:
+        //  • default  — dark translucent glass, crisp white glyph
+        //  • preview  — same glass, gold border + soft halo (hint, not
+        //               fill) so the winning op doesn't shout
+        //  • active   — warm gold fill, dark glyph (earned, not
+        //               previewed)
+        background: active
+          ? "linear-gradient(180deg, rgba(255,245,210,0.97) 0%, rgba(220,190,100,0.92) 100%)"
+          : "linear-gradient(180deg, rgba(36,38,48,0.78) 0%, rgba(18,20,28,0.82) 100%)",
+        backdropFilter: active ? undefined : "blur(14px) saturate(130%)",
+        WebkitBackdropFilter: active
+          ? undefined
+          : "blur(14px) saturate(130%)",
+        color: active
+          ? "rgba(38,28,10,1)"
+          : isTargetPreview
+            ? "rgba(244,228,164,0.98)"
+            : "rgba(248,248,252,0.92)",
+        border: active
+          ? "1px solid rgba(232,217,160,0.95)"
+          : isTargetPreview
+            ? "1px solid rgba(232,217,160,0.55)"
+            : "1px solid rgba(255,255,255,0.14)",
+        boxShadow: active
+          ? "0 10px 26px rgba(232,217,160,0.55), 0 0 0 2px rgba(232,217,160,0.28), 0 1px 0 rgba(255,245,210,0.55) inset"
+          : isTargetPreview
+            ? "0 6px 18px rgba(0,0,0,0.35), 0 0 22px rgba(232,217,160,0.22), 0 1px 0 rgba(255,255,255,0.1) inset, 0 -1px 0 rgba(0,0,0,0.3) inset"
+            : "0 6px 18px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.08) inset, 0 -1px 0 rgba(0,0,0,0.3) inset",
+        transition: `background 220ms ${EASE_CSS}, box-shadow 220ms ${EASE_CSS}, border-color 220ms ${EASE_CSS}, color 220ms ${EASE_CSS}`,
+      }}
+    >
+      <span
+        className="leading-none font-light relative"
+        style={{ fontSize: glyphSize }}
+      >
+        {op === "-" ? "−" : op}
+      </span>
+      {/* Activation ring: single radiating pulse each time the satellite
+          becomes active. Keyed by a counter so successive activations
+          remount this element and replay the outward fade. */}
+      {!reducedMotion && (
+        <AnimatePresence>
+          {pulseKey > 0 && (
+            <motion.div
+              key={pulseKey}
+              initial={{ scale: 1, opacity: 0.7 }}
+              animate={{ scale: 1.55, opacity: 0 }}
+              transition={{ duration: 0.6, ease: [0.2, 0.8, 0.2, 1] }}
+              style={{
+                position: "absolute",
+                inset: -3,
+                borderRadius: "9999px",
+                border: "1.5px solid rgba(255,245,210,0.9)",
+                pointerEvents: "none",
+              }}
+            />
+          )}
+        </AnimatePresence>
+      )}
+    </motion.div>
   );
 }
 
