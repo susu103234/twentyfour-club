@@ -415,6 +415,63 @@ export function BubbleBoard({
         className="relative select-none"
         style={{ height: cfg.containerH, overflow: "visible" }}
       >
+        {/* Water-fusion layer: rendered behind the cards. Two soft cool-
+            tinted droplets at the dragged-card and target-card centres,
+            under a goo filter that fuses them when they're close. The
+            effect only shows up while a target is actively locked, so
+            the cards look like a pair of water beads coalescing at the
+            moment of contact. */}
+        {!reducedMotion &&
+          drag &&
+          drag.targetId &&
+          targetNode &&
+          (() => {
+            const targetSlot = slotMap.get(drag.targetId);
+            if (!targetSlot) return null;
+            const blobSize = Math.round(cfg.cardH * 1.2);
+            const targetCx = targetSlot.x + cfg.cardW / 2;
+            const targetCy = targetSlot.y + cfg.cardH / 2;
+            return (
+              <div
+                className="absolute inset-0 pointer-events-none"
+                style={{ filter: "url(#card-fusion)", zIndex: 2 }}
+              >
+                {/* Dragged-card blob — follows the pointer. */}
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.14 }}
+                  style={{
+                    position: "absolute",
+                    left: drag.px - blobSize / 2,
+                    top: drag.py - blobSize / 2,
+                    width: blobSize,
+                    height: blobSize,
+                    borderRadius: "9999px",
+                    background: "rgba(180,200,255,0.55)",
+                  }}
+                />
+                {/* Target-card blob — pinned to the target's slot. */}
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.14 }}
+                  style={{
+                    position: "absolute",
+                    left: targetCx - blobSize / 2,
+                    top: targetCy - blobSize / 2,
+                    width: blobSize,
+                    height: blobSize,
+                    borderRadius: "9999px",
+                    background: "rgba(180,200,255,0.55)",
+                  }}
+                />
+              </div>
+            );
+          })()}
+
         <AnimatePresence initial={false}>
           {pool.map((node) => {
             const slot = slotMap.get(node.id);
@@ -559,7 +616,10 @@ function DragCard({
   onDragEnd,
 }: DragCardProps) {
   const isLeaf = node.children === undefined;
-  const fadeForSatellites = isDragged && satellitesOpen;
+  // Dragged card stays fully opaque — the water-fusion layer behind the
+  // cards is what communicates "these two are merging." Fading the card
+  // (the old behaviour) made it read as half-committed to the action.
+  void satellitesOpen;
 
   // Number morph: for a fresh merge result, show the value counting from
   // one of the source values to the final. Pick whichever source is
@@ -699,7 +759,7 @@ function DragCard({
       onDragEnd={onDragEnd}
       initial={initial}
       animate={{
-        opacity: fadeForSatellites ? 0.55 : 1,
+        opacity: 1,
         scale: isDragged ? 1.035 : isHoverTarget ? 1.025 : 1,
         // NOTE: x/y intentionally omitted. They're fully owned by the
         // motion values bound into style — framer's drag writes to them
@@ -820,88 +880,11 @@ function OpSatellites({
   // feel. Inside opRadius the active-state scale takes over.
   const MAGNET_RANGE = cfg.opRadius * 1.9;
 
-  // Slightly larger than the crisp satellites so a gold aura peeks past
-  // their edges; the anchor blob is kept a touch smaller so it reads as
-  // the card's "liquid core" rather than covering the card face.
-  const liquidSize = Math.round(cfg.opSize * 1.15);
-  const anchorBlobSize = Math.round(cfg.opSize * 0.9);
-
   return (
     <div
       className="absolute pointer-events-none"
       style={{ left: anchor.x, top: anchor.y, zIndex: 30 }}
     >
-      {/* Liquid layer: solid gold blobs under a goo filter. All extrusion
-          blobs start stacked at the card centre, so the filter fuses them
-          into one big droplet. As they animate outward they stretch apart
-          like mercury — the filter's alpha-threshold keeps shapes organic
-          and the connection visible until they're fully separated. */}
-      {!reducedMotion && (
-        <div
-          className="absolute"
-          style={{
-            left: 0,
-            top: 0,
-            filter: "url(#op-goo)",
-            // Nudges the merged droplet to sit visually on top of the
-            // target card rather than floating in-between. Combined with
-            // anchor positioning this puts the goo "source" right at
-            // the card's centre.
-            mixBlendMode: "normal",
-          }}
-        >
-          {/* Anchor drop — a persistent blob at the card centre so
-              extrusions have a body to emerge out of. */}
-          <motion.div
-            initial={{ scale: 0.5, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.4, opacity: 0, transition: { duration: 0.16 } }}
-            transition={{ ...SATELLITE_SPRING, mass: 0.45 }}
-            style={{
-              position: "absolute",
-              left: -anchorBlobSize / 2,
-              top: -anchorBlobSize / 2,
-              width: anchorBlobSize,
-              height: anchorBlobSize,
-              borderRadius: "9999px",
-              background: "rgba(232,217,160,0.55)",
-            }}
-          />
-          {layout.map(({ op, dx, dy }, i) => (
-            <motion.div
-              key={`liquid-${op}`}
-              initial={{
-                x: -liquidSize / 2,
-                y: -liquidSize / 2,
-                scale: 0.65,
-                opacity: 0.9,
-              }}
-              animate={{
-                x: dx - liquidSize / 2,
-                y: dy - liquidSize / 2,
-                scale: 1,
-                opacity: 1,
-              }}
-              exit={{
-                x: -liquidSize / 2,
-                y: -liquidSize / 2,
-                scale: 0.45,
-                opacity: 0,
-                transition: { duration: 0.16, ease: [0.4, 0, 0.2, 1] },
-              }}
-              transition={{ ...SATELLITE_SPRING, delay: i * 0.025 }}
-              style={{
-                position: "absolute",
-                width: liquidSize,
-                height: liquidSize,
-                borderRadius: "9999px",
-                background: "rgba(232,217,160,0.75)",
-              }}
-            />
-          ))}
-        </div>
-      )}
-
       {layout.map(({ op, dx, dy }, i) => {
         const ok = isOpLegal(a, b, op);
         const val = ok ? combine(a, b, op).node.value : null;
@@ -927,9 +910,12 @@ function OpSatellites({
             key={op}
             initial={{
               opacity: 0,
-              scale: reducedMotion ? 0.92 : 0.72,
-              x: -size / 2,
-              y: -size / 2,
+              scale: reducedMotion ? 0.92 : 0.82,
+              // Start 35 % of the way to their final slot — no messy
+              // stack at the card centre, just a short "already on the
+              // way" slide that lets the stagger breathe.
+              x: dx * 0.35 - size / 2,
+              y: dy * 0.35 - size / 2,
             }}
             animate={{
               opacity: ok ? 1 : 0.35,
@@ -939,35 +925,51 @@ function OpSatellites({
             }}
             exit={{
               opacity: 0,
-              scale: reducedMotion ? 0.92 : 0.7,
-              transition: { duration: 0.14, ease: [0.4, 0, 0.2, 1] },
+              // Pull back toward the card on exit so the dismissal
+              // reverses the emergence cleanly.
+              scale: reducedMotion ? 0.92 : 0.75,
+              x: dx * 0.35 - size / 2,
+              y: dy * 0.35 - size / 2,
+              transition: { duration: 0.18, ease: [0.4, 0, 0.2, 1] },
             }}
             transition={
               reducedMotion
                 ? { duration: 0.14, ease: [0.4, 0, 0.2, 1] }
-                : { ...SATELLITE_SPRING, delay: i * 0.022 }
+                : { ...SATELLITE_SPRING, delay: i * 0.028 }
             }
             className="absolute rounded-full flex items-center justify-center"
             style={{
               width: size,
               height: size,
+              // Three-state visual, stripped back to a glass language:
+              //  • default  — dark translucent glass, crisp white glyph
+              //  • preview  — same glass, gold border + soft halo (hint,
+              //               not fill) so the winning op doesn't shout
+              //  • active   — warm gold fill, dark glyph (earned, not
+              //               previewed)
               background: active
-                ? "radial-gradient(circle at 30% 30%, rgba(255,245,210,1) 0%, rgba(220,190,100,0.95) 100%)"
+                ? "linear-gradient(180deg, rgba(255,245,210,0.97) 0%, rgba(220,190,100,0.92) 100%)"
+                : "linear-gradient(180deg, rgba(36,38,48,0.78) 0%, rgba(18,20,28,0.82) 100%)",
+              backdropFilter: active ? undefined : "blur(14px) saturate(130%)",
+              WebkitBackdropFilter: active
+                ? undefined
+                : "blur(14px) saturate(130%)",
+              color: active
+                ? "rgba(38,28,10,1)"
                 : isTargetPreview
-                  ? "radial-gradient(circle at 30% 30%, rgba(240,225,170,0.98) 0%, rgba(190,160,80,0.9) 100%)"
-                  : "radial-gradient(circle at 30% 30%, rgba(84,84,96,0.98) 0%, rgba(36,36,46,0.98) 100%)",
-              color:
-                active || isTargetPreview ? "#1c1a10" : "rgb(240,240,248)",
-              border:
-                active || isTargetPreview
-                  ? "1px solid rgba(232,217,160,0.95)"
+                  ? "rgba(244,228,164,0.98)"
+                  : "rgba(248,248,252,0.92)",
+              border: active
+                ? "1px solid rgba(232,217,160,0.95)"
+                : isTargetPreview
+                  ? "1px solid rgba(232,217,160,0.55)"
                   : "1px solid rgba(255,255,255,0.14)",
               boxShadow: active
-                ? "0 0 0 3px rgba(232,217,160,0.35), 0 10px 26px rgba(232,217,160,0.5)"
+                ? "0 10px 26px rgba(232,217,160,0.55), 0 0 0 2px rgba(232,217,160,0.28), 0 1px 0 rgba(255,245,210,0.55) inset"
                 : isTargetPreview
-                  ? "0 0 0 2px rgba(232,217,160,0.3), 0 6px 18px rgba(232,217,160,0.3)"
-                  : "0 6px 18px rgba(0,0,0,0.45)",
-              transition: `background 200ms ${EASE_CSS}, box-shadow 200ms ${EASE_CSS}, border-color 200ms ${EASE_CSS}, color 200ms ${EASE_CSS}`,
+                  ? "0 6px 18px rgba(0,0,0,0.35), 0 0 22px rgba(232,217,160,0.22), 0 1px 0 rgba(255,255,255,0.1) inset, 0 -1px 0 rgba(0,0,0,0.3) inset"
+                  : "0 6px 18px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.08) inset, 0 -1px 0 rgba(0,0,0,0.3) inset",
+              transition: `background 220ms ${EASE_CSS}, box-shadow 220ms ${EASE_CSS}, border-color 220ms ${EASE_CSS}, color 220ms ${EASE_CSS}`,
             }}
           >
             <span

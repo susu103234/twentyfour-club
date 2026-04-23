@@ -41,10 +41,10 @@ export default function App() {
 
   return (
     <div className="relative w-full h-full">
-      {/* Shared SVG filter defs. `op-goo` gives the op-satellite emergence
-          its liquid-mercury feel — Gaussian blur followed by a sharp
-          alpha-channel threshold so overlapping blobs merge and separate
-          organically. Rendered out-of-flow so it imposes no layout. */}
+      {/* SVG filter for card-to-card water fusion. Softer than a standard
+          "goo" filter (stdDeviation 8, gentler alpha threshold) so the
+          merger reads as droplets coalescing rather than molten metal.
+          Only applied when a drag is actively hovering a target. */}
       <svg
         aria-hidden
         width="0"
@@ -52,16 +52,16 @@ export default function App() {
         style={{ position: "fixed", top: 0, left: 0, pointerEvents: "none" }}
       >
         <defs>
-          <filter id="op-goo">
+          <filter id="card-fusion">
             <feGaussianBlur
               in="SourceGraphic"
-              stdDeviation="5"
+              stdDeviation="8"
               result="blur"
             />
             <feColorMatrix
               in="blur"
               mode="matrix"
-              values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -9"
+              values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 16 -7"
             />
           </filter>
         </defs>
