@@ -50,23 +50,33 @@ const LOCK_GAP = 3;
 
 /**
  * Vertical duck for non-dragged cards while a sibling is being dragged.
- * They slide down by half their height so only the top half peeks out,
- * clearing a "travel lane" above them for the lifted card to fly over.
+ * Deep enough that only the top edge of each peer peeks out — the number
+ * is mostly hidden, which reads clearly as "I'm out of the way." The
+ * bottom of the ducked card naturally clips against the window edge.
  */
-const DUCK_Y = CARD_H / 2;
+const DUCK_Y = 32;
 
 /**
- * The pointer needs to dip into the lower half of the strip to acquire
- * a target. Above this threshold is the travel lane; below it is the
- * drop zone (where the ducked cards wait).
+ * Pointer y-band that counts as the drop zone — the narrow strip where
+ * the ducked cards are actually visible. Keeping this tight (roughly the
+ * top ~12 px of the ducked card) prevents drive-by grabs as the pointer
+ * moves past a peer on the way to the intended target.
  */
-const DROP_ZONE_Y = CARD_H / 2 - 4;
+const DROP_ZONE_Y = DUCK_Y - 2;
+const DROP_ZONE_Y_MAX = CARD_H + 6;
 
 /**
  * Pulling the pointer far above the strip releases the target, letting
  * the player re-aim without having to drop the card first.
  */
 const RELEASE_Y = -8;
+
+/**
+ * Horizontal hit width — narrower than the card's visual width so the
+ * pointer has to land squarely over a peer's centre column to grab it.
+ * Passing through the gaps no longer triggers anything.
+ */
+const HIT_W = 24;
 
 /** Slot width assignment for the locked 5-tile layout. */
 const LOCK_WIDTHS = [OP_W, OP_W, CARD_W, OP_W, OP_W];
@@ -214,9 +224,10 @@ export function StripBoard() {
   };
 
   /**
-   * Find the card (if any) whose x-column the pointer sits over. Own card
-   * is skipped. The search uses *idle* slot x-ranges so the horizontal hit
-   * zones don't reshuffle when a card ducks.
+   * Find the card (if any) whose centre column the pointer sits over.
+   * Own card is skipped. Uses HIT_W (narrower than the card visual width)
+   * against each idle slot's centre, so pointer travelling past a peer's
+   * edge doesn't register as a hit.
    */
   const columnTarget = (px: number): string | null => {
     for (let i = 0; i < pool.length; i++) {
@@ -224,7 +235,8 @@ export function StripBoard() {
       if (drag && n.id === drag.id) continue;
       const s = idleSlots[i];
       if (!s) continue;
-      if (px >= s.x && px <= s.x + s.w) return n.id;
+      const cx = s.x + s.w / 2;
+      if (Math.abs(px - cx) <= HIT_W / 2) return n.id;
     }
     return null;
   };
@@ -243,7 +255,7 @@ export function StripBoard() {
     let targetId: string | null;
     if (p.y < RELEASE_Y) {
       targetId = null;
-    } else if (p.y >= DROP_ZONE_Y && p.y <= CARD_H + 8) {
+    } else if (p.y >= DROP_ZONE_Y && p.y <= DROP_ZONE_Y_MAX) {
       // In the drop zone — acquire the column's card (or keep current if
       // the pointer is in a gap between slots).
       targetId = columnTarget(p.x) ?? drag?.targetId ?? null;
