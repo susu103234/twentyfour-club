@@ -48,6 +48,26 @@ const GAP = 5;
 const OP_W = 30;
 const LOCK_GAP = 3;
 
+/**
+ * Vertical duck for non-dragged cards while a sibling is being dragged.
+ * They slide down by half their height so only the top half peeks out,
+ * clearing a "travel lane" above them for the lifted card to fly over.
+ */
+const DUCK_Y = CARD_H / 2;
+
+/**
+ * The pointer needs to dip into the lower half of the strip to acquire
+ * a target. Above this threshold is the travel lane; below it is the
+ * drop zone (where the ducked cards wait).
+ */
+const DROP_ZONE_Y = CARD_H / 2 - 4;
+
+/**
+ * Pulling the pointer far above the strip releases the target, letting
+ * the player re-aim without having to drop the card first.
+ */
+const RELEASE_Y = -8;
+
 /** Slot width assignment for the locked 5-tile layout. */
 const LOCK_WIDTHS = [OP_W, OP_W, CARD_W, OP_W, OP_W];
 /** Which operator goes in which lock slot (null = target). */
@@ -193,33 +213,44 @@ export function StripBoard() {
     return { x: absX - box.left, y: absY - box.top };
   };
 
+  /**
+   * Find the card (if any) whose x-column the pointer sits over. Own card
+   * is skipped. The search uses *idle* slot x-ranges so the horizontal hit
+   * zones don't reshuffle when a card ducks.
+   */
+  const columnTarget = (px: number): string | null => {
+    for (let i = 0; i < pool.length; i++) {
+      const n = pool[i];
+      if (drag && n.id === drag.id) continue;
+      const s = idleSlots[i];
+      if (!s) continue;
+      if (px >= s.x && px <= s.x + s.w) return n.id;
+    }
+    return null;
+  };
+
   const handleDrag = (id: string, info: PanInfo) => {
     const p = relPointer(info.point.x, info.point.y);
     if (!p) return;
 
+    // Travel vs. drop lane:
+    //   • y < DROP_ZONE_Y  → above the ducked cards; no acquisition, no
+    //                        lock loss (if one exists — carry it)
+    //   • y >= DROP_ZONE_Y → pointer has dipped into the ducked-card row;
+    //                        the card in that x-column is the target
+    //   • y < RELEASE_Y    → user yanked the card upward; release lock
+    //                        entirely so they can re-aim
     let targetId: string | null;
-
-    if (drag?.targetId) {
-      // Sticky lock — bystander idle slots overlap the lock-centre slot so
-      // re-hit-testing would flip the target mid-gesture.
-      targetId = drag.targetId;
+    if (p.y < RELEASE_Y) {
+      targetId = null;
+    } else if (p.y >= DROP_ZONE_Y && p.y <= CARD_H + 8) {
+      // In the drop zone — acquire the column's card (or keep current if
+      // the pointer is in a gap between slots).
+      targetId = columnTarget(p.x) ?? drag?.targetId ?? null;
     } else {
-      let newTarget: string | null = null;
-      for (let i = 0; i < pool.length; i++) {
-        const n = pool[i];
-        if (n.id === id) continue;
-        const s = idleSlots[i];
-        if (
-          p.x >= s.x &&
-          p.x <= s.x + s.w &&
-          p.y >= -4 &&
-          p.y <= CARD_H + 4
-        ) {
-          newTarget = n.id;
-          break;
-        }
-      }
-      targetId = newTarget;
+      // Above the drop zone but not pulled all the way up: keep whatever
+      // lock we already had. Supports moving onto op tiles after a lock.
+      targetId = drag?.targetId ?? null;
     }
 
     let op: ReduceOp | null = null;
@@ -291,6 +322,10 @@ export function StripBoard() {
         const isDragged = drag?.id === node.id;
         const isTarget = drag?.targetId === node.id;
         const isBystander = locked && !isDragged && !isTarget;
+        // Idle peer: someone else is dragging and we're not the target
+        // (lock not yet acquired). These cards duck out of the way so the
+        // lifted card has a clear travel lane overhead.
+        const isIdlePeer = isDragging && !isDragged && !isTarget && !locked;
         const isMergeResult = mergeCtx !== null && !prevPoolIds.has(node.id);
         const isWinner = winner?.id === node.id;
 
@@ -307,6 +342,7 @@ export function StripBoard() {
             isDragged={isDragged}
             isTarget={isTarget}
             hidden={isBystander}
+            isIdlePeer={isIdlePeer}
             primed={primed && !drag}
             mergeCtx={mergeCtx}
             isMergeResult={isMergeResult}
@@ -386,6 +422,7 @@ interface DragCardProps {
   isDragged: boolean;
   isTarget: boolean;
   hidden: boolean;
+  isIdlePeer: boolean;
   primed: boolean;
   mergeCtx: MergeCtx | null;
   isMergeResult: boolean;
@@ -402,6 +439,7 @@ function DragCard({
   isDragged,
   isTarget,
   hidden,
+  isIdlePeer,
   primed,
   mergeCtx,
   isMergeResult,
@@ -521,10 +559,12 @@ function DragCard({
       onDragEnd={onDragEnd}
       initial={initial}
       animate={{
-        opacity: hidden ? 0 : 1,
-        scale: isDragged ? 1.04 : isTarget ? 1.03 : 1,
+        opacity: hidden ? 0 : isIdlePeer ? 0.5 : 1,
+        scale: isDragged ? 1.04 : isTarget ? 1.03 : isIdlePeer ? 0.94 : 1,
         x: 0,
-        y: 0,
+        // Idle peers duck downward so only the top half peeks above the
+        // strip edge — makes a physical-feeling travel lane over them.
+        y: isIdlePeer ? DUCK_Y : 0,
       }}
       exit={exit}
       transition={
