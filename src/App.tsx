@@ -41,31 +41,6 @@ export default function App() {
 
   return (
     <div className="relative w-full h-full">
-      {/* SVG filter for card-to-card water fusion. Softer than a standard
-          "goo" filter (stdDeviation 8, gentler alpha threshold) so the
-          merger reads as droplets coalescing rather than molten metal.
-          Only applied when a drag is actively hovering a target. */}
-      <svg
-        aria-hidden
-        width="0"
-        height="0"
-        style={{ position: "fixed", top: 0, left: 0, pointerEvents: "none" }}
-      >
-        <defs>
-          <filter id="card-fusion">
-            <feGaussianBlur
-              in="SourceGraphic"
-              stdDeviation="8"
-              result="blur"
-            />
-            <feColorMatrix
-              in="blur"
-              mode="matrix"
-              values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 16 -7"
-            />
-          </filter>
-        </defs>
-      </svg>
       <div className="relative flex flex-col glass rounded-[14px] overflow-hidden h-full">
         {!collapsed && <TitleBar />}
         {!collapsed && <div className="divider" />}

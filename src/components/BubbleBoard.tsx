@@ -147,14 +147,6 @@ interface DragState {
   /** Pointer in container coords — used for op-satellite hit tests. */
   px: number;
   py: number;
-  /**
-   * Grab offset: (pointer - card centre) captured at drag-start. Lets the
-   * water-fusion layer anchor the "dragged" blob on the card's actual
-   * centre (pointer − grabOffset) instead of on the pointer itself, so
-   * the blob tracks the card body no matter where the user grabbed it.
-   */
-  grabOffsetX: number;
-  grabOffsetY: number;
   targetId: string | null;
   op: ReduceOp | null;
 }
@@ -361,15 +353,7 @@ export function BubbleBoard({
       }
     }
 
-    setDrag({
-      id,
-      px,
-      py,
-      grabOffsetX: drag?.grabOffsetX ?? 0,
-      grabOffsetY: drag?.grabOffsetY ?? 0,
-      targetId,
-      op,
-    });
+    setDrag({ id, px, py, targetId, op });
   };
 
   const handleDragEnd = () => {
@@ -431,85 +415,6 @@ export function BubbleBoard({
         className="relative select-none"
         style={{ height: cfg.containerH, overflow: "visible" }}
       >
-        {/* Water-fusion layer: rendered behind the cards. Two soft cool-
-            tinted droplets at the dragged-card and target-card centres,
-            under a goo filter that fuses them when they're close. The
-            effect only shows up while a target is actively locked, so
-            the cards look like a pair of water beads coalescing at the
-            moment of contact. */}
-        {!reducedMotion &&
-          drag &&
-          drag.targetId &&
-          targetNode &&
-          (() => {
-            const targetSlot = slotMap.get(drag.targetId);
-            if (!targetSlot) return null;
-            const blobSize = Math.round(cfg.cardH * 1.15);
-            const targetCx = targetSlot.x + cfg.cardW / 2;
-            const targetCy = targetSlot.y + cfg.cardH / 2;
-            // Recover the dragged card's actual centre — the pointer minus
-            // the grab offset captured at drag-start. Without this the
-            // blob would anchor on the pointer (potentially near the card
-            // edge) instead of the card body.
-            const draggedCx = drag.px - drag.grabOffsetX;
-            const draggedCy = drag.py - drag.grabOffsetY;
-            // Surface-tension pull: as the dragged card approaches the
-            // target, the target blob drifts a little toward the dragged
-            // one. Reads like two droplets reaching for each other.
-            const centerDist = Math.hypot(
-              draggedCx - targetCx,
-              draggedCy - targetCy
-            );
-            const proximity = Math.max(
-              0,
-              1 - centerDist / (blobSize * 1.3)
-            );
-            const pullX = (draggedCx - targetCx) * 0.18 * proximity;
-            const pullY = (draggedCy - targetCy) * 0.18 * proximity;
-            return (
-              <div
-                className="absolute inset-0 pointer-events-none"
-                // zIndex 0 keeps the fusion layer beneath every card;
-                // the water aura only peeks past the card edges.
-                style={{ filter: "url(#card-fusion)", zIndex: 0 }}
-              >
-                {/* Dragged-card blob — follows the real card centre. */}
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.16, ease: [0.4, 0, 0.2, 1] }}
-                  style={{
-                    position: "absolute",
-                    left: draggedCx - blobSize / 2,
-                    top: draggedCy - blobSize / 2,
-                    width: blobSize,
-                    height: blobSize,
-                    borderRadius: "9999px",
-                    background: "rgba(186,206,255,0.6)",
-                  }}
-                />
-                {/* Target-card blob — pulls toward the dragged blob on
-                    proximity to simulate surface tension. */}
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.16, ease: [0.4, 0, 0.2, 1] }}
-                  style={{
-                    position: "absolute",
-                    left: targetCx + pullX - blobSize / 2,
-                    top: targetCy + pullY - blobSize / 2,
-                    width: blobSize,
-                    height: blobSize,
-                    borderRadius: "9999px",
-                    background: "rgba(186,206,255,0.6)",
-                  }}
-                />
-              </div>
-            );
-          })()}
-
         <AnimatePresence initial={false}>
           {pool.map((node) => {
             const slot = slotMap.get(node.id);
@@ -527,31 +432,20 @@ export function BubbleBoard({
                 cfg={cfg}
                 isDragged={isDragged}
                 isHoverTarget={isHoverTarget}
-                satellitesOpen={drag?.targetId != null}
                 primed={primed}
                 mergeCtx={mergeCtx}
                 isMergeResult={isMergeResult}
                 isWinner={isWinner}
                 reducedMotion={reducedMotion}
-                onDragStart={(info) => {
-                  const p = relPointer(info.point.x, info.point.y);
-                  const px = p?.x ?? slot.x + cfg.cardW / 2;
-                  const py = p?.y ?? slot.y + cfg.cardH / 2;
-                  // grab offset = pointer − card centre at the moment
-                  // the grab happens. Subtracted from the live pointer
-                  // later to recover the card's centre during drag.
-                  const grabOffsetX = px - (slot.x + cfg.cardW / 2);
-                  const grabOffsetY = py - (slot.y + cfg.cardH / 2);
+                onDragStart={() =>
                   setDrag({
                     id: node.id,
-                    px,
-                    py,
-                    grabOffsetX,
-                    grabOffsetY,
+                    px: slot.x + cfg.cardW / 2,
+                    py: slot.y + cfg.cardH / 2,
                     targetId: null,
                     op: null,
-                  });
-                }}
+                  })
+                }
                 onDrag={(info) => handleDrag(node.id, info)}
                 onDragEnd={handleDragEnd}
               />
@@ -635,14 +529,12 @@ interface DragCardProps {
   cfg: BubbleConfig;
   isDragged: boolean;
   isHoverTarget: boolean;
-  /** Any satellites are open — let the dragged card fade so they show. */
-  satellitesOpen: boolean;
   primed: boolean;
   mergeCtx: MergeCtx | null;
   isMergeResult: boolean;
   isWinner: boolean;
   reducedMotion: boolean;
-  onDragStart: (info: PanInfo) => void;
+  onDragStart: () => void;
   onDrag: (info: PanInfo) => void;
   onDragEnd: () => void;
 }
@@ -653,7 +545,6 @@ function DragCard({
   cfg,
   isDragged,
   isHoverTarget,
-  satellitesOpen,
   primed,
   mergeCtx,
   isMergeResult,
@@ -664,10 +555,6 @@ function DragCard({
   onDragEnd,
 }: DragCardProps) {
   const isLeaf = node.children === undefined;
-  // Dragged card stays fully opaque — the water-fusion layer behind the
-  // cards is what communicates "these two are merging." Fading the card
-  // (the old behaviour) made it read as half-committed to the action.
-  void satellitesOpen;
 
   // Number morph: for a fresh merge result, show the value counting from
   // one of the source values to the final. Pick whichever source is
@@ -802,7 +689,7 @@ function DragCard({
       dragMomentum={false}
       dragElastic={0}
       dragTransition={SNAP_BACK}
-      onDragStart={(_, info) => onDragStart(info)}
+      onDragStart={onDragStart}
       onDrag={(_, info) => onDrag(info)}
       onDragEnd={onDragEnd}
       initial={initial}
