@@ -15,6 +15,14 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
+// Shared spring tuple so imperative animate() calls match the declarative
+// CARD_SPRING used by <motion.div>'s transition prop.
+const SPRING_ANIMATE_OPTS = {
+  type: "spring" as const,
+  stiffness: 320,
+  damping: 30,
+  mass: 0.6,
+};
 import { useGame } from "@/store/gameStore";
 import {
   combine,
@@ -626,18 +634,30 @@ function DragCard({
   const isMergeDragged = mergeCtx?.draggedId === node.id;
   const isMergeTarget = mergeCtx?.targetId === node.id;
 
-  const initial = (() => {
-    if (isMergeResult && mergeCtx) {
-      // Start visually at the target slot, then slide home.
-      return {
-        opacity: 0,
-        scale: reducedMotion ? 0.92 : 0.6,
-        x: mergeCtx.targetSlot.x - slot.x,
-        y: mergeCtx.targetSlot.y - slot.y,
-      };
-    }
-    return { opacity: 0, scale: reducedMotion ? 0.96 : 0.88, x: 0, y: 0 };
-  })();
+  const initial = isMergeResult && mergeCtx
+    ? { opacity: 0, scale: reducedMotion ? 0.92 : 0.6 }
+    : { opacity: 0, scale: reducedMotion ? 0.96 : 0.88 };
+
+  // Merge-result entrance: set the motion values to the target-slot delta
+  // before paint, then animate them imperatively back to 0. Doing this on
+  // the motion values directly (rather than via animate.x/y on the prop)
+  // avoids a per-render conflict with framer's own drag writes — that
+  // conflict was the source of the mid-drag flicker.
+  useLayoutEffect(() => {
+    if (!isMergeResult || !mergeCtx) return;
+    const dx = mergeCtx.targetSlot.x - slot.x;
+    const dy = mergeCtx.targetSlot.y - slot.y;
+    x.set(dx);
+    y.set(dy);
+    const xCtl = animate(x, 0, SPRING_ANIMATE_OPTS);
+    const yCtl = animate(y, 0, SPRING_ANIMATE_OPTS);
+    return () => {
+      xCtl.stop();
+      yCtl.stop();
+    };
+    // Mount-once entrance; slot / mergeCtx are fresh per mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const exit = (() => {
     if (isMergeDragged && mergeCtx) {
@@ -681,11 +701,11 @@ function DragCard({
       animate={{
         opacity: fadeForSatellites ? 0.55 : 1,
         scale: isDragged ? 1.035 : isHoverTarget ? 1.025 : 1,
-        // Keep x/y on 0 when not dragging; motion's drag handler writes to
-        // the motionValue directly while dragging, so `x/y: 0` in animate is
-        // the "home" target for snap-back / merge-result entrance.
-        x: 0,
-        y: 0,
+        // NOTE: x/y intentionally omitted. They're fully owned by the
+        // motion values bound into style — framer's drag writes to them
+        // during a gesture and `dragSnapToOrigin` springs them back on
+        // release. Putting x/y: 0 here causes an animate-vs-drag race
+        // and manifests as mid-drag flicker.
       }}
       exit={exit}
       transition={
@@ -800,11 +820,88 @@ function OpSatellites({
   // feel. Inside opRadius the active-state scale takes over.
   const MAGNET_RANGE = cfg.opRadius * 1.9;
 
+  // Slightly larger than the crisp satellites so a gold aura peeks past
+  // their edges; the anchor blob is kept a touch smaller so it reads as
+  // the card's "liquid core" rather than covering the card face.
+  const liquidSize = Math.round(cfg.opSize * 1.15);
+  const anchorBlobSize = Math.round(cfg.opSize * 0.9);
+
   return (
     <div
       className="absolute pointer-events-none"
       style={{ left: anchor.x, top: anchor.y, zIndex: 30 }}
     >
+      {/* Liquid layer: solid gold blobs under a goo filter. All extrusion
+          blobs start stacked at the card centre, so the filter fuses them
+          into one big droplet. As they animate outward they stretch apart
+          like mercury — the filter's alpha-threshold keeps shapes organic
+          and the connection visible until they're fully separated. */}
+      {!reducedMotion && (
+        <div
+          className="absolute"
+          style={{
+            left: 0,
+            top: 0,
+            filter: "url(#op-goo)",
+            // Nudges the merged droplet to sit visually on top of the
+            // target card rather than floating in-between. Combined with
+            // anchor positioning this puts the goo "source" right at
+            // the card's centre.
+            mixBlendMode: "normal",
+          }}
+        >
+          {/* Anchor drop — a persistent blob at the card centre so
+              extrusions have a body to emerge out of. */}
+          <motion.div
+            initial={{ scale: 0.5, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.4, opacity: 0, transition: { duration: 0.16 } }}
+            transition={{ ...SATELLITE_SPRING, mass: 0.45 }}
+            style={{
+              position: "absolute",
+              left: -anchorBlobSize / 2,
+              top: -anchorBlobSize / 2,
+              width: anchorBlobSize,
+              height: anchorBlobSize,
+              borderRadius: "9999px",
+              background: "rgba(232,217,160,0.55)",
+            }}
+          />
+          {layout.map(({ op, dx, dy }, i) => (
+            <motion.div
+              key={`liquid-${op}`}
+              initial={{
+                x: -liquidSize / 2,
+                y: -liquidSize / 2,
+                scale: 0.65,
+                opacity: 0.9,
+              }}
+              animate={{
+                x: dx - liquidSize / 2,
+                y: dy - liquidSize / 2,
+                scale: 1,
+                opacity: 1,
+              }}
+              exit={{
+                x: -liquidSize / 2,
+                y: -liquidSize / 2,
+                scale: 0.45,
+                opacity: 0,
+                transition: { duration: 0.16, ease: [0.4, 0, 0.2, 1] },
+              }}
+              transition={{ ...SATELLITE_SPRING, delay: i * 0.025 }}
+              style={{
+                position: "absolute",
+                width: liquidSize,
+                height: liquidSize,
+                borderRadius: "9999px",
+                background: "rgba(232,217,160,0.75)",
+              }}
+            />
+          ))}
+        </div>
+      )}
+
       {layout.map(({ op, dx, dy }, i) => {
         const ok = isOpLegal(a, b, op);
         const val = ok ? combine(a, b, op).node.value : null;

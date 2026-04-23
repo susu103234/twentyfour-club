@@ -41,6 +41,31 @@ export default function App() {
 
   return (
     <div className="relative w-full h-full">
+      {/* Shared SVG filter defs. `op-goo` gives the op-satellite emergence
+          its liquid-mercury feel — Gaussian blur followed by a sharp
+          alpha-channel threshold so overlapping blobs merge and separate
+          organically. Rendered out-of-flow so it imposes no layout. */}
+      <svg
+        aria-hidden
+        width="0"
+        height="0"
+        style={{ position: "fixed", top: 0, left: 0, pointerEvents: "none" }}
+      >
+        <defs>
+          <filter id="op-goo">
+            <feGaussianBlur
+              in="SourceGraphic"
+              stdDeviation="5"
+              result="blur"
+            />
+            <feColorMatrix
+              in="blur"
+              mode="matrix"
+              values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -9"
+            />
+          </filter>
+        </defs>
+      </svg>
       <div className="relative flex flex-col glass rounded-[14px] overflow-hidden h-full">
         {!collapsed && <TitleBar />}
         {!collapsed && <div className="divider" />}

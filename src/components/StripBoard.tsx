@@ -15,6 +15,15 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
+
+// Imperative spring used for the merge-result entrance. Must match
+// CARD_SPRING's shape so the entrance feels like the rest of the board.
+const SPRING_ANIMATE_OPTS = {
+  type: "spring" as const,
+  stiffness: 320,
+  damping: 30,
+  mass: 0.6,
+};
 import { useGame } from "@/store/gameStore";
 import {
   combine,
@@ -521,17 +530,24 @@ function DragCard({
   const isMergeDragged = mergeCtx?.draggedId === node.id;
   const isMergeTarget = mergeCtx?.targetId === node.id;
 
-  const initial = (() => {
-    if (isMergeResult && mergeCtx) {
-      return {
-        opacity: 0,
-        scale: reducedMotion ? 0.92 : 0.55,
-        x: mergeCtx.targetSlot.x - slot.x,
-        y: 0,
-      };
-    }
-    return { opacity: 0, scale: reducedMotion ? 0.96 : 0.7, x: 0, y: 0 };
-  })();
+  const initial = isMergeResult && mergeCtx
+    ? { opacity: 0, scale: reducedMotion ? 0.92 : 0.55 }
+    : { opacity: 0, scale: reducedMotion ? 0.96 : 0.7 };
+
+  // Merge-result entrance handled imperatively on the motion values so
+  // we never put x/y in animate while drag is simultaneously writing to
+  // them (that race caused mid-drag flicker in earlier builds).
+  useLayoutEffect(() => {
+    if (!isMergeResult || !mergeCtx) return;
+    const dx = mergeCtx.targetSlot.x - slot.x;
+    x.set(dx);
+    const xCtl = animate(x, 0, SPRING_ANIMATE_OPTS);
+    return () => {
+      xCtl.stop();
+    };
+    // Mount-once entrance; slot / mergeCtx are fresh per mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const exit = (() => {
     if (isMergeDragged && mergeCtx) {
@@ -573,10 +589,14 @@ function DragCard({
       animate={{
         opacity: hidden ? 0 : isIdlePeer ? 0.5 : 1,
         scale: isDragged ? 1.04 : isTarget ? 1.03 : isIdlePeer ? 0.94 : 1,
-        x: 0,
+        // x omitted — motion value owns it (drag writes, snap-to-origin
+        // returns it). Putting `x: 0` here raced the drag writes and
+        // caused visible flicker.
         // Idle peers duck downward so only the top half peeks above the
         // strip edge — makes a physical-feeling travel lane over them.
-        y: isIdlePeer ? DUCK_Y : 0,
+        // Only non-dragged cards get a y target; the dragged card lets
+        // framer's drag control y.
+        ...(isDragged ? {} : { y: isIdlePeer ? DUCK_Y : 0 }),
       }}
       exit={exit}
       transition={
